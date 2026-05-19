@@ -55,9 +55,16 @@ func play(args []string) error {
 		fmt.Fprintf(os.Stdout, "timeline=%q duration_ms=%d events=%d dry_run=%t\n", tl.Name, tl.DurationMS, len(tl.Events), *dryRun)
 	}
 
-	controller := devices.DeviceController(devices.NewLifxDeviceController())
+	var controller devices.DeviceController
 	if *dryRun {
 		controller = devices.NewMockDeviceController(os.Stdout)
+	} else {
+		lifxController, err := devices.NewLifxDeviceController()
+		if err != nil {
+			return err
+		}
+		defer lifxController.Close()
+		controller = lifxController
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
