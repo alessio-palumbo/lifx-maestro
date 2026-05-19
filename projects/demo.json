@@ -1,0 +1,40 @@
+{
+  "name": "demo",
+  "duration_ms": 10000,
+  "events": [
+    {
+      "time_ms": 0,
+      "target": "all",
+      "action": "power_on"
+    },
+    {
+      "time_ms": 1000,
+      "target": "desk",
+      "action": "set_color",
+      "params": {
+        "hue": 0,
+        "saturation": 1.0,
+        "brightness": 1.0,
+        "kelvin": 3500,
+        "duration_ms": 500
+      }
+    },
+    {
+      "time_ms": 2500,
+      "target": "desk",
+      "action": "set_color",
+      "params": {
+        "hue": 220,
+        "saturation": 0.85,
+        "brightness": 0.65,
+        "kelvin": 4000,
+        "duration_ms": 300
+      }
+    },
+    {
+      "time_ms": 5000,
+      "target": "all",
+      "action": "power_off"
+    }
+  ]
+}
