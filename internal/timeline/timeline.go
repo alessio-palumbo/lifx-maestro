@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 )
 
@@ -37,6 +38,32 @@ func Load(path string) (*Timeline, error) {
 
 	tl.SortEvents()
 	return &tl, nil
+}
+
+func Save(path string, tl *Timeline) error {
+	if tl == nil {
+		return fmt.Errorf("timeline is required")
+	}
+	if err := tl.Validate(); err != nil {
+		return err
+	}
+	tl.SortEvents()
+
+	data, err := json.MarshalIndent(tl, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode timeline JSON: %w", err)
+	}
+	data = append(data, '\n')
+
+	if dir := filepath.Dir(path); dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("create output directory: %w", err)
+		}
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("write timeline: %w", err)
+	}
+	return nil
 }
 
 func (t *Timeline) Validate() error {
