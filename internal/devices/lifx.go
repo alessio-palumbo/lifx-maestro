@@ -133,5 +133,15 @@ func normalizePercent(value float64) float64 {
 	if value >= 0 && value <= 1 {
 		return value * 100
 	}
+	return clamp(value, 0, 100)
+}
+
+func clamp(value, min, max float64) float64 {
+	if value < min {
+		return min
+	}
+	if value > max {
+		return max
+	}
 	return value
 }

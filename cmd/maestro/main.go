@@ -12,6 +12,7 @@ import (
 	"lifx-maestro/internal/audio"
 	"lifx-maestro/internal/devices"
 	"lifx-maestro/internal/generation"
+	"lifx-maestro/internal/perform"
 	"lifx-maestro/internal/playback"
 	"lifx-maestro/internal/timeline"
 )
@@ -33,6 +34,8 @@ func run(args []string) error {
 		return analyze(args[1:])
 	case "generate":
 		return generate(args[1:])
+	case "perform":
+		return performCommand(args[1:])
 	case "play":
 		return play(args[1:])
 	default:
@@ -131,6 +134,59 @@ func generate(args []string) error {
 	}
 
 	fmt.Fprintf(os.Stdout, "generated %s (%d events, bpm %.3f)\n", *outputPath, len(tl.Events), result.BPM)
+	return nil
+}
+
+func performCommand(args []string) error {
+	flags := flag.NewFlagSet("perform", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+
+	dryRun := flags.Bool("dry-run", false, "use mock device controller")
+	verbose := flags.Bool("verbose", false, "print synchronization details")
+	mode := flags.String("mode", string(generation.ModeDefault), "generation mode: default, ambient, energetic")
+	devicesTarget := flags.String("devices", "all", "device selector")
+	pythonPath := flags.String("python", "python3", "python executable")
+
+	if err := flags.Parse(interspersedFlags(args, map[string]bool{
+		"mode":    true,
+		"devices": true,
+		"python":  true,
+	})); err != nil {
+		return err
+	}
+	if flags.NArg() != 1 {
+		return fmt.Errorf("usage: maestro perform [--dry-run] [--verbose] [--mode default|ambient|energetic] [--devices all] [--python python3] <song.mp3>")
+	}
+
+	var controller devices.DeviceController
+	if *dryRun {
+		controller = devices.NewMockDeviceController(os.Stdout)
+	} else {
+		lifxController, err := devices.NewLifxDeviceController()
+		if err != nil {
+			return err
+		}
+		defer lifxController.Close()
+		controller = lifxController
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	result, err := perform.Run(ctx, flags.Arg(0), controller, perform.Options{
+		Mode:       generation.Mode(*mode),
+		Target:     *devicesTarget,
+		PythonPath: *pythonPath,
+		Verbose:    *verbose,
+		Out:        os.Stdout,
+	})
+	if err != nil {
+		return err
+	}
+
+	if *verbose {
+		fmt.Fprintf(os.Stdout, "[perform] complete bpm=%.3f events=%d\n", result.Analysis.BPM, result.Events)
+	}
 	return nil
 }
 

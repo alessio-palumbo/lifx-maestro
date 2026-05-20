@@ -1,10 +1,11 @@
 package playback
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"sync"
 	"time"
 
@@ -14,9 +15,10 @@ import (
 )
 
 type Options struct {
-	DryRun  bool
-	Verbose bool
-	Out     io.Writer
+	DryRun     bool
+	Verbose    bool
+	Out        io.Writer
+	ClockLabel string
 }
 
 type Player struct {
@@ -29,6 +31,10 @@ func NewPlayer(controller devices.DeviceController, options Options) *Player {
 }
 
 func (p *Player) Play(ctx context.Context, tl *timeline.Timeline) error {
+	return p.PlayWithClock(ctx, tl, scheduler.NewMonotonicClock())
+}
+
+func (p *Player) PlayWithClock(ctx context.Context, tl *timeline.Timeline, clock scheduler.Clock) error {
 	if tl == nil {
 		return fmt.Errorf("timeline is required")
 	}
@@ -60,6 +66,7 @@ func (p *Player) Play(ctx context.Context, tl *timeline.Timeline) error {
 			defer wg.Done()
 			for event := range jobs {
 				if err := p.execute(event); err != nil {
+					p.logf("[playback] event index=%d error=%v", event.Index, err)
 					errs <- err
 				}
 			}
@@ -69,9 +76,18 @@ func (p *Player) Play(ctx context.Context, tl *timeline.Timeline) error {
 	s := scheduler.New(scheduler.Options{
 		PollInterval: 2 * time.Millisecond,
 		Lookahead:    8 * time.Millisecond,
+		Logf: func(format string, args ...interface{}) {
+			if p.options.Verbose && p.options.Out != nil {
+				label := p.options.ClockLabel
+				if label == "" {
+					label = "clock"
+				}
+				fmt.Fprintf(p.options.Out, "["+label+" "+format+"\n", args...)
+			}
+		},
 	})
 
-	err := s.Run(ctx, events, func(ctx context.Context, event scheduler.Event) {
+	err := s.RunWithClock(ctx, clock, events, func(ctx context.Context, event scheduler.Event) {
 		select {
 		case <-ctx.Done():
 		case jobs <- event:
@@ -101,6 +117,8 @@ func (p *Player) execute(scheduled scheduler.Event) error {
 		return fmt.Errorf("scheduled event %d has unexpected value type", scheduled.Index)
 	}
 
+	p.logf("[playback] executing index=%d target=%s action=%s", scheduled.Index, event.Target, event.Action)
+
 	switch event.Action {
 	case "power_on":
 		return p.controller.PowerOn(event.Target)
@@ -117,58 +135,37 @@ func (p *Player) execute(scheduled scheduler.Event) error {
 	}
 }
 
-func colorParams(raw map[string]interface{}) (devices.ColorParams, error) {
-	var params devices.ColorParams
-	var err error
-
-	if params.Hue, err = number(raw, "hue", 0); err != nil {
-		return params, err
+func (p *Player) logf(format string, args ...interface{}) {
+	if !p.options.Verbose || p.options.Out == nil {
+		return
 	}
-	if params.Saturation, err = number(raw, "saturation", 0); err != nil {
-		return params, err
-	}
-	if params.Brightness, err = number(raw, "brightness", 0); err != nil {
-		return params, err
-	}
-
-	kelvin, err := number(raw, "kelvin", 3500)
-	if err != nil {
-		return params, err
-	}
-	durationMS, err := number(raw, "duration_ms", 0)
-	if err != nil {
-		return params, err
-	}
-
-	params.Kelvin = int(math.Round(kelvin))
-	params.DurationMS = int64(math.Round(durationMS))
-	return params, nil
+	fmt.Fprintf(p.options.Out, format+"\n", args...)
 }
 
-func number(raw map[string]interface{}, key string, fallback float64) (float64, error) {
-	if raw == nil {
-		return fallback, nil
+func colorParams(raw json.RawMessage) (devices.ColorParams, error) {
+	var params timeline.SetColorParams
+	if len(raw) > 0 {
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&params); err != nil {
+			return devices.ColorParams{}, fmt.Errorf("decode set_color params: %w", err)
+		}
 	}
 
-	value, ok := raw[key]
-	if !ok {
-		return fallback, nil
-	}
-
-	switch typed := value.(type) {
-	case float64:
-		return typed, nil
-	case int:
-		return float64(typed), nil
-	case jsonNumber:
-		return typed.Float64()
-	default:
-		return 0, fmt.Errorf("param %q must be numeric", key)
-	}
+	return devices.ColorParams{
+		Hue:        valueOr(params.Hue, 0),
+		Saturation: valueOr(params.Saturation, 0),
+		Brightness: valueOr(params.Brightness, 0),
+		Kelvin:     valueOr(params.Kelvin, 3500),
+		DurationMS: valueOr(params.DurationMS, 0),
+	}, nil
 }
 
-type jsonNumber interface {
-	Float64() (float64, error)
+func valueOr[T any](value *T, fallback T) T {
+	if value == nil {
+		return fallback
+	}
+	return *value
 }
 
 func FormatOffset(d time.Duration) string {

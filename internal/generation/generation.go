@@ -101,14 +101,18 @@ func colorEvent(timeMS int64, target string, hue, saturation, brightness float64
 		TimeMS: timeMS,
 		Target: target,
 		Action: "set_color",
-		Params: map[string]interface{}{
-			"hue":         math.Round(hue*10) / 10,
-			"saturation":  math.Round(saturation*1000) / 1000,
-			"brightness":  math.Round(brightness*1000) / 1000,
-			"kelvin":      3500,
-			"duration_ms": durationMS,
-		},
+		Params: timeline.MustParams(timeline.SetColorParams{
+			Hue:        ptr(math.Round(hue*10) / 10),
+			Saturation: ptr(math.Round(saturation*1000) / 1000),
+			Brightness: ptr(math.Round(brightness*1000) / 1000),
+			Kelvin:     ptr(3500),
+			DurationMS: ptr(durationMS),
+		}),
 	}
+}
+
+func ptr[T any](value T) *T {
+	return &value
 }
 
 func energyAt(points []analysis.EnergyPoint, timeMS int64) float64 {

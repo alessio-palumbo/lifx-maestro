@@ -1,9 +1,11 @@
 package generation
 
 import (
+	"encoding/json"
 	"testing"
 
 	"lifx-maestro/internal/analysis"
+	"lifx-maestro/internal/timeline"
 )
 
 func TestGenerateCreatesBeatEvents(t *testing.T) {
@@ -29,7 +31,9 @@ func TestGenerateCreatesBeatEvents(t *testing.T) {
 	if tl.Events[0].Action != "power_on" {
 		t.Fatalf("first action = %q, want power_on", tl.Events[0].Action)
 	}
-	if tl.Events[2].Params["brightness"].(float64) <= tl.Events[1].Params["brightness"].(float64) {
+	first := setColorParams(t, tl.Events[1])
+	second := setColorParams(t, tl.Events[2])
+	if *second.Brightness <= *first.Brightness {
 		t.Fatal("expected higher energy beat to have higher brightness")
 	}
 }
@@ -42,4 +46,14 @@ func TestGenerateRejectsUnknownMode(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
+}
+
+func setColorParams(t *testing.T, event timeline.Event) timeline.SetColorParams {
+	t.Helper()
+
+	var params timeline.SetColorParams
+	if err := json.Unmarshal(event.Params, &params); err != nil {
+		t.Fatal(err)
+	}
+	return params
 }
