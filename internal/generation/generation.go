@@ -2,34 +2,28 @@ package generation
 
 import (
 	"fmt"
-	"math"
 	"strings"
 
 	"lifx-maestro/internal/analysis"
+	"lifx-maestro/internal/devices"
+	"lifx-maestro/internal/effects"
+	"lifx-maestro/internal/sections"
+	"lifx-maestro/internal/styles"
 	"lifx-maestro/internal/timeline"
 )
 
-type Mode string
-
-const (
-	ModeDefault   Mode = "default"
-	ModeAmbient   Mode = "ambient"
-	ModeEnergetic Mode = "energetic"
-)
-
-type Options struct {
-	Name   string
-	Target string
-	Mode   Mode
+type Config struct {
+	Style                    string  `json:"style"`
+	BrightnessScale          float64 `json:"brightness_scale"`
+	TransitionAggressiveness float64 `json:"transition_aggressiveness"`
 }
 
-type modeConfig struct {
-	palette       []float64
-	minBrightness float64
-	maxBrightness float64
-	minDurationMS int64
-	maxDurationMS int64
-	saturation    float64
+type Options struct {
+	Name    string
+	Target  string
+	Style   string
+	Config  Config
+	Devices []devices.DeviceInfo
 }
 
 func Generate(song analysis.SongAnalysis, options Options) (*timeline.Timeline, error) {
@@ -42,14 +36,16 @@ func Generate(song analysis.SongAnalysis, options Options) (*timeline.Timeline, 
 	if options.Target == "" {
 		options.Target = "all"
 	}
-	if options.Mode == "" {
-		options.Mode = ModeDefault
-	}
 
-	cfg, err := configForMode(options.Mode)
+	styleName := styleName(options)
+	style, err := styles.Get(styleName)
 	if err != nil {
 		return nil, err
 	}
+	style = applyConfig(style, options.Config)
+
+	targets := targetsFor(options.Target, options.Devices)
+	songSections := sections.FromAnalysis(song)
 
 	tl := &timeline.Timeline{
 		Name:       options.Name,
@@ -59,120 +55,175 @@ func Generate(song analysis.SongAnalysis, options Options) (*timeline.Timeline, 
 		},
 	}
 
-	if len(song.Beats) == 0 {
-		tl.Events = append(tl.Events, energyEvents(song, options.Target, cfg)...)
-	} else {
-		for i, beat := range song.Beats {
-			if beat > song.DurationMS {
-				continue
-			}
-			eventTime := beat
-			if eventTime == 0 {
-				eventTime = 1
-			}
-			energy := energyAt(song.Energy, beat)
-			hue := cfg.palette[i%len(cfg.palette)]
-			tl.Events = append(tl.Events, colorEvent(eventTime, options.Target, hue, cfg.saturation, brightnessForEnergy(energy, cfg), durationForEnergy(energy, cfg)))
-		}
+	for i, section := range songSections {
+		tl.Events = append(tl.Events, sectionEvents(song, section, style, targets, i)...)
+	}
+
+	if len(tl.Events) == 1 {
+		tl.Events = append(tl.Events, fallbackEvents(song, style, targets)...)
 	}
 
 	tl.SortEvents()
 	return tl, nil
 }
 
-func energyEvents(song analysis.SongAnalysis, target string, cfg modeConfig) []timeline.Event {
-	events := make([]timeline.Event, 0, len(song.Energy))
-	for i, point := range song.Energy {
-		if point.TimeMS > song.DurationMS {
-			continue
-		}
-		eventTime := point.TimeMS
-		if eventTime == 0 {
-			eventTime = 1
-		}
-		hue := cfg.palette[i%len(cfg.palette)]
-		events = append(events, colorEvent(eventTime, target, hue, cfg.saturation, brightnessForEnergy(point.Value, cfg), durationForEnergy(point.Value, cfg)))
-	}
-	return events
-}
-
-func colorEvent(timeMS int64, target string, hue, saturation, brightness float64, durationMS int64) timeline.Event {
-	return timeline.Event{
-		TimeMS: timeMS,
-		Target: target,
-		Action: "set_color",
-		Params: timeline.MustParams(timeline.SetColorParams{
-			Hue:        ptr(math.Round(hue*10) / 10),
-			Saturation: ptr(math.Round(saturation*1000) / 1000),
-			Brightness: ptr(math.Round(brightness*1000) / 1000),
-			Kelvin:     ptr(3500),
-			DurationMS: ptr(durationMS),
-		}),
-	}
-}
-
-func ptr[T any](value T) *T {
-	return &value
-}
-
-func energyAt(points []analysis.EnergyPoint, timeMS int64) float64 {
-	if len(points) == 0 {
-		return 0.5
+func sectionEvents(song analysis.SongAnalysis, section sections.Section, style styles.Style, targets []effects.Target, sectionIndex int) []timeline.Event {
+	ctx := effects.Context{
+		Section:     section,
+		Beats:       song.Beats,
+		Energy:      song.Energy,
+		Targets:     targets,
+		Palette:     style.Palette,
+		MinBright:   minBrightness(section, style),
+		MaxBright:   maxBrightness(section, style),
+		DurationMS:  effectDuration(song.BPM, section, style),
+		BeatStep:    beatStep(section, style),
+		TargetShift: sectionIndex,
 	}
 
-	best := points[0]
-	for _, point := range points {
-		if point.TimeMS > timeMS {
-			break
-		}
-		best = point
-	}
-	return best.Value
-}
-
-func brightnessForEnergy(energy float64, cfg modeConfig) float64 {
-	energy = clamp(energy, 0, 1)
-	return cfg.minBrightness + (cfg.maxBrightness-cfg.minBrightness)*energy
-}
-
-func durationForEnergy(energy float64, cfg modeConfig) int64 {
-	energy = clamp(energy, 0, 1)
-	duration := float64(cfg.maxDurationMS) - (float64(cfg.maxDurationMS-cfg.minDurationMS) * energy)
-	return int64(math.Round(duration))
-}
-
-func configForMode(mode Mode) (modeConfig, error) {
-	switch Mode(strings.ToLower(string(mode))) {
-	case ModeDefault:
-		return modeConfig{
-			palette:       []float64{220, 275},
-			minBrightness: 0.35,
-			maxBrightness: 0.95,
-			minDurationMS: 90,
-			maxDurationMS: 280,
-			saturation:    1.0,
-		}, nil
-	case ModeAmbient:
-		return modeConfig{
-			palette:       []float64{200, 260},
-			minBrightness: 0.18,
-			maxBrightness: 0.65,
-			minDurationMS: 250,
-			maxDurationMS: 700,
-			saturation:    0.75,
-		}, nil
-	case ModeEnergetic:
-		return modeConfig{
-			palette:       []float64{80, 150, 180, 210, 285, 330, 360},
-			minBrightness: 0.55,
-			maxBrightness: 1.0,
-			minDurationMS: 45,
-			maxDurationMS: 160,
-			saturation:    1.0,
-		}, nil
+	switch section.Type {
+	case sections.TypeIntro:
+		return effects.Breathing{}.Generate(ctx)
+	case sections.TypeBuild:
+		return effects.AlternatingPulse{}.Generate(ctx)
+	case sections.TypeDrop:
+		ctx.BeatStep = 1
+		ctx.DurationMS = maxInt64(45, ctx.DurationMS/2)
+		return effects.Sweep{}.Generate(ctx)
+	case sections.TypeBreakdown:
+		return effects.Fade{}.Generate(ctx)
+	case sections.TypeOutro:
+		ctx.MaxBright *= 0.65
+		return effects.Breathing{}.Generate(ctx)
 	default:
-		return modeConfig{}, fmt.Errorf("unsupported generation mode %q", mode)
+		return effects.Pulse{}.Generate(ctx)
 	}
+}
+
+func fallbackEvents(song analysis.SongAnalysis, style styles.Style, targets []effects.Target) []timeline.Event {
+	section := sections.Section{StartMS: 0, EndMS: song.DurationMS, Type: sections.TypeDrop, Energy: 0.5}
+	return sectionEvents(song, section, style, targets, 0)
+}
+
+func styleName(options Options) string {
+	if options.Config.Style != "" {
+		return options.Config.Style
+	}
+	if options.Style != "" {
+		return options.Style
+	}
+	return "synthwave"
+}
+
+func applyConfig(style styles.Style, config Config) styles.Style {
+	if config.BrightnessScale > 0 {
+		style.BrightnessScale = config.BrightnessScale
+	}
+	if config.TransitionAggressiveness > 0 {
+		style.TransitionAggressiveness = config.TransitionAggressiveness
+	}
+	return style
+}
+
+func targetsFor(target string, infos []devices.DeviceInfo) []effects.Target {
+	names := splitTargets(target)
+	if len(names) > 1 {
+		targets := make([]effects.Target, 0, len(names))
+		for _, name := range names {
+			targets = append(targets, effects.Target{DeviceID: name, Capabilities: defaultCapabilities()})
+		}
+		return targets
+	}
+
+	if target == "all" && len(infos) > 0 {
+		targets := make([]effects.Target, 0, len(infos))
+		for _, info := range infos {
+			if info.ID == "" {
+				continue
+			}
+			targets = append(targets, effects.Target{DeviceID: info.ID, Capabilities: info.Capabilities})
+		}
+		if len(targets) > 0 {
+			return targets
+		}
+	}
+
+	return []effects.Target{{DeviceID: target, Capabilities: defaultCapabilities()}}
+}
+
+func splitTargets(target string) []string {
+	parts := strings.Split(target, ",")
+	var out []string
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+func defaultCapabilities() devices.DeviceCapabilities {
+	return devices.DeviceCapabilities{
+		Kind:      devices.DeviceKindSingleZone,
+		HasColor:  true,
+		HasKelvin: true,
+		ZoneCount: 1,
+	}
+}
+
+func minBrightness(section sections.Section, style styles.Style) float64 {
+	switch section.Type {
+	case sections.TypeIntro, sections.TypeOutro:
+		return 0.12 * style.BrightnessScale
+	case sections.TypeBreakdown:
+		return 0.1 * style.BrightnessScale
+	default:
+		return 0.24 * style.BrightnessScale
+	}
+}
+
+func maxBrightness(section sections.Section, style styles.Style) float64 {
+	base := 0.45 + section.Energy*0.5
+	switch section.Type {
+	case sections.TypeDrop:
+		base += 0.16
+	case sections.TypeBreakdown:
+		base *= 0.62
+	}
+	return clamp(base*style.BrightnessScale, 0.08, 1.0)
+}
+
+func beatStep(section sections.Section, style styles.Style) int {
+	if section.Type == sections.TypeDrop {
+		return 1
+	}
+	if style.PulseEvery <= 0 {
+		return 1
+	}
+	return style.PulseEvery
+}
+
+func effectDuration(bpm float64, section sections.Section, style styles.Style) int64 {
+	beatMS := 500.0
+	if bpm > 0 {
+		beatMS = 60000 / bpm
+	}
+	aggression := clamp(style.TransitionAggressiveness, 0, 1)
+	duration := beatMS * (0.85 - aggression*0.55)
+
+	switch section.Type {
+	case sections.TypeIntro, sections.TypeOutro:
+		duration *= 2.8
+	case sections.TypeBuild:
+		duration *= 1.2
+	case sections.TypeDrop:
+		duration *= 0.65
+	case sections.TypeBreakdown:
+		duration *= 4.0
+	}
+
+	return maxInt64(45, int64(duration))
 }
 
 func clamp(value, min, max float64) float64 {
@@ -183,4 +234,23 @@ func clamp(value, min, max float64) float64 {
 		return max
 	}
 	return value
+}
+
+func maxInt64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func AvailableStyles() []string {
+	return styles.Names()
+}
+
+func ValidateStyle(name string) error {
+	_, err := styles.Get(name)
+	if err != nil {
+		return fmt.Errorf("%w; available styles: %s", err, strings.Join(AvailableStyles(), ", "))
+	}
+	return nil
 }

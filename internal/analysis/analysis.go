@@ -16,11 +16,19 @@ type SongAnalysis struct {
 	BPM        float64       `json:"bpm"`
 	Beats      []int64       `json:"beats"`
 	Energy     []EnergyPoint `json:"energy"`
+	Sections   []Section     `json:"sections,omitempty"`
 }
 
 type EnergyPoint struct {
 	TimeMS int64   `json:"time_ms"`
 	Value  float64 `json:"value"`
+}
+
+type Section struct {
+	StartMS int64   `json:"start_ms"`
+	EndMS   int64   `json:"end_ms"`
+	Type    string  `json:"type"`
+	Energy  float64 `json:"energy"`
 }
 
 type Analyzer struct {
@@ -92,6 +100,20 @@ func (s SongAnalysis) Validate() error {
 		}
 		if point.Value < 0 || point.Value > 1 {
 			return fmt.Errorf("analysis energy point %d value must be between 0 and 1", i)
+		}
+	}
+	for i, section := range s.Sections {
+		if section.StartMS < 0 {
+			return fmt.Errorf("analysis section %d start_ms must be non-negative", i)
+		}
+		if section.EndMS < section.StartMS {
+			return fmt.Errorf("analysis section %d end_ms must be greater than or equal to start_ms", i)
+		}
+		if section.Type == "" {
+			return fmt.Errorf("analysis section %d type is required", i)
+		}
+		if section.Energy < 0 || section.Energy > 1 {
+			return fmt.Errorf("analysis section %d energy must be between 0 and 1", i)
 		}
 	}
 	return nil

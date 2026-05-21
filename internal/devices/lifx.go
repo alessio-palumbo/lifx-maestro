@@ -135,6 +135,32 @@ func (l *LifxDeviceController) RestoreState() error {
 	return restoreErr
 }
 
+func (l *LifxDeviceController) Devices() ([]DeviceInfo, error) {
+	if l.controller == nil {
+		return nil, fmt.Errorf("lifx controller is not initialized")
+	}
+
+	discovered := l.controller.GetDevices()
+	infos := make([]DeviceInfo, 0, len(discovered))
+	for _, device := range discovered {
+		infos = append(infos, DeviceInfo{
+			ID:       device.Serial.String(),
+			Label:    device.Label,
+			Group:    device.Group,
+			Location: device.Location,
+			Capabilities: DeviceCapabilities{
+				Kind:         deviceKind(device),
+				HasColor:     device.ColorProperties.HasColor,
+				HasKelvin:    device.ColorProperties.TemperatureRange.Min > 0 || device.ColorProperties.TemperatureRange.Max > 0,
+				ZoneCount:    zoneCount(device),
+				MatrixWidth:  device.MatrixProperties.Width,
+				MatrixHeight: device.MatrixProperties.Height,
+			},
+		})
+	}
+	return infos, nil
+}
+
 func (l *LifxDeviceController) send(target string, msg *protocol.Message) error {
 	if l.controller == nil {
 		return fmt.Errorf("lifx controller is not initialized")
@@ -217,4 +243,29 @@ func clamp(value, min, max float64) float64 {
 		return max
 	}
 	return value
+}
+
+func deviceKind(device lifxdevice.Device) DeviceKind {
+	switch device.LightType.String() {
+	case "multi_zone":
+		return DeviceKindMultiZone
+	case "matrix":
+		return DeviceKindMatrix
+	default:
+		return DeviceKindSingleZone
+	}
+}
+
+func zoneCount(device lifxdevice.Device) int {
+	switch deviceKind(device) {
+	case DeviceKindMultiZone:
+		return len(device.MultizoneProperties.Zones)
+	case DeviceKindMatrix:
+		if device.MatrixProperties.NZones > 0 {
+			return device.MatrixProperties.NZones
+		}
+		return device.MatrixProperties.Width * device.MatrixProperties.Height
+	default:
+		return 1
+	}
 }

@@ -9,7 +9,7 @@ func TestCommandTreeIncludesExpectedCommands(t *testing.T) {
 		got[subcommand.Name] = true
 	}
 
-	for _, name := range []string{"analyze", "generate", "perform", "play"} {
+	for _, name := range []string{"analyze", "generate", "perform", "play", "styles"} {
 		if !got[name] {
 			t.Fatalf("missing command %q", name)
 		}

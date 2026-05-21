@@ -52,6 +52,20 @@ func (m *MockDeviceController) RestoreState() error {
 	return nil
 }
 
+func (m *MockDeviceController) Devices() ([]DeviceInfo, error) {
+	return []DeviceInfo{
+		{
+			ID:    "mock-all",
+			Label: "Mock All",
+			Capabilities: DeviceCapabilities{
+				Kind:      DeviceKindSingleZone,
+				HasColor:  true,
+				HasKelvin: true,
+			},
+		},
+	}, nil
+}
+
 func (m *MockDeviceController) print(target, action string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

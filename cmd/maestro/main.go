@@ -34,6 +34,7 @@ func newCommand() *cli.Command {
 			generateCommand(),
 			performCommand(),
 			playCommand(),
+			stylesCommand(),
 		},
 	}
 }
@@ -83,12 +84,12 @@ func generateCommand() *cli.Command {
 		ArgsUsage: "<song.mp3|song.wav>",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "output", Usage: "timeline JSON output path"},
-			&cli.StringFlag{Name: "mode", Value: string(generation.ModeDefault), Usage: "generation mode: default, ambient, energetic"},
+			&cli.StringFlag{Name: "style", Usage: "generation style"},
 			&cli.StringFlag{Name: "target", Value: "all", Usage: "timeline target selector"},
 			&cli.StringFlag{Name: "python", Value: "python3", Usage: "python executable"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			audioPath, err := singleArg(cmd, "maestro generate [--output projects/song.json] [--mode default|ambient|energetic] [--target all] [--python python3] <song.mp3|song.wav>")
+			audioPath, err := singleArg(cmd, "maestro generate [--output projects/song.json] [--style synthwave] [--target all] [--python python3] <song.mp3|song.wav>")
 			if err != nil {
 				return err
 			}
@@ -115,7 +116,7 @@ func generateCommand() *cli.Command {
 			tl, err := generation.Generate(*result, generation.Options{
 				Name:   audio.TimelineName(audioPath),
 				Target: cmd.String("target"),
-				Mode:   generation.Mode(cmd.String("mode")),
+				Style:  cmd.String("style"),
 			})
 			if err != nil {
 				return err
@@ -139,12 +140,12 @@ func performCommand() *cli.Command {
 		Flags: []cli.Flag{
 			&cli.BoolFlag{Name: "dry-run", Usage: "use mock device controller"},
 			&cli.BoolFlag{Name: "verbose", Usage: "print synchronization details"},
-			&cli.StringFlag{Name: "mode", Value: string(generation.ModeDefault), Usage: "generation mode: default, ambient, energetic"},
+			&cli.StringFlag{Name: "style", Usage: "generation style"},
 			&cli.StringFlag{Name: "devices", Value: "all", Usage: "device selector"},
 			&cli.StringFlag{Name: "python", Value: "python3", Usage: "python executable"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			audioPath, err := singleArg(cmd, "maestro perform [--dry-run] [--verbose] [--mode default|ambient|energetic] [--devices all] [--python python3] <song.mp3>")
+			audioPath, err := singleArg(cmd, "maestro perform [--dry-run] [--verbose] [--style synthwave] [--devices all] [--python python3] <song.mp3>")
 			if err != nil {
 				return err
 			}
@@ -166,7 +167,7 @@ func performCommand() *cli.Command {
 			defer stop()
 
 			result, err := perform.Run(ctx, audioPath, controller, perform.Options{
-				Mode:       generation.Mode(cmd.String("mode")),
+				Style:      cmd.String("style"),
 				Target:     cmd.String("devices"),
 				PythonPath: cmd.String("python"),
 				Verbose:    cmd.Bool("verbose"),
@@ -178,6 +179,19 @@ func performCommand() *cli.Command {
 
 			if cmd.Bool("verbose") {
 				fmt.Fprintf(os.Stdout, "[perform] complete bpm=%.3f events=%d\n", result.Analysis.BPM, result.Events)
+			}
+			return nil
+		},
+	}
+}
+
+func stylesCommand() *cli.Command {
+	return &cli.Command{
+		Name:  "styles",
+		Usage: "list available generation styles",
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			for _, name := range generation.AvailableStyles() {
+				fmt.Fprintln(os.Stdout, name)
 			}
 			return nil
 		},

@@ -31,6 +31,7 @@ def main():
         "bpm": round(tempo, 3),
         "beats": beats,
         "energy": energy,
+        "sections": sections(duration_ms, energy),
     }
     print(json.dumps(result, separators=(",", ":")))
     return 0
@@ -74,6 +75,37 @@ def downsample_energy(times, values, step_ms):
         points.append({"time_ms": next_ms, "value": round(float(np.mean(bucket)), 4)})
 
     return points
+
+
+def sections(duration_ms, energy):
+    if duration_ms <= 0:
+        return []
+
+    boundaries = [
+        (0.00, 0.16, "intro"),
+        (0.16, 0.36, "build"),
+        (0.36, 0.68, "drop"),
+        (0.68, 0.86, "breakdown"),
+        (0.86, 1.00, "outro"),
+    ]
+    result = []
+    for start_ratio, end_ratio, label in boundaries:
+        start_ms = int(round(duration_ms * start_ratio))
+        end_ms = int(round(duration_ms * end_ratio))
+        result.append({
+            "start_ms": start_ms,
+            "end_ms": end_ms,
+            "type": label,
+            "energy": round(mean_energy(energy, start_ms, end_ms), 4),
+        })
+    return result
+
+
+def mean_energy(energy, start_ms, end_ms):
+    values = [p["value"] for p in energy if start_ms <= p["time_ms"] < end_ms]
+    if not values:
+        return 0.5
+    return float(np.mean(values))
 
 
 if __name__ == "__main__":

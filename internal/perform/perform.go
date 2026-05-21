@@ -13,7 +13,7 @@ import (
 )
 
 type Options struct {
-	Mode       generation.Mode
+	Style      string
 	Target     string
 	PythonPath string
 	Verbose    bool
@@ -35,9 +35,6 @@ func Run(ctx context.Context, audioPath string, controller devices.DeviceControl
 	if options.Target == "" {
 		options.Target = "all"
 	}
-	if options.Mode == "" {
-		options.Mode = generation.ModeDefault
-	}
 
 	analyzer := analysis.NewAnalyzer()
 	if options.PythonPath != "" {
@@ -56,9 +53,10 @@ func Run(ctx context.Context, audioPath string, controller devices.DeviceControl
 		fmt.Fprintf(options.Out, "[perform] generating timeline bpm=%.3f beats=%d\n", song.BPM, len(song.Beats))
 	}
 	tl, err := generation.Generate(*song, generation.Options{
-		Name:   audio.TimelineName(audioPath),
-		Target: options.Target,
-		Mode:   options.Mode,
+		Name:    audio.TimelineName(audioPath),
+		Target:  options.Target,
+		Style:   options.Style,
+		Devices: deviceInfos(controller),
 	})
 	if err != nil {
 		return nil, err
@@ -109,4 +107,16 @@ func Run(ctx context.Context, audioPath string, controller devices.DeviceControl
 	}
 
 	return &Result{Analysis: song, Events: len(tl.Events)}, nil
+}
+
+func deviceInfos(controller devices.DeviceController) []devices.DeviceInfo {
+	provider, ok := controller.(devices.CapabilityProvider)
+	if !ok {
+		return nil
+	}
+	infos, err := provider.Devices()
+	if err != nil {
+		return nil
+	}
+	return infos
 }
