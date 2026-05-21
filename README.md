@@ -146,6 +146,7 @@ Examples:
 go run ./cmd/maestro perform samples/song.mp3 --dry-run --verbose
 go run ./cmd/maestro perform samples/song.mp3 --style synthwave --devices all
 go run ./cmd/maestro perform samples/song.mp3 --style cinematic --devices desk
+go run ./cmd/maestro perform samples/song.mp3 --style neon --devices tv,desk
 ```
 
 During `perform`, audio playback owns the master clock. The lighting scheduler follows the audio position rather than using an independent wall-clock timer.
@@ -218,6 +219,7 @@ Common target values:
 - a LIFX group name
 - a LIFX location name
 - a 12-character LIFX serial
+- a comma-separated list of selectors, for example `tv,desk`
 
 For generated timelines, `--target` sets the target written into the JSON:
 
@@ -229,6 +231,7 @@ For live performance, `--devices` selects devices:
 
 ```bash
 go run ./cmd/maestro perform samples/song.mp3 --devices all
+go run ./cmd/maestro perform samples/song.mp3 --devices tv,desk
 ```
 
 When using real LIFX devices, the controller discovers devices on the local network and exposes basic capabilities:

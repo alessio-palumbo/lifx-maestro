@@ -198,26 +198,10 @@ func (l *LifxDeviceController) resolveTarget(target string) ([]lifxdevice.Serial
 		}
 	}
 
-	if key == "all" {
-		for _, device := range devices {
-			add(device.Serial)
-		}
-		return serials, nil
-	}
-
-	if serial, err := lifxdevice.SerialFromHex(key); err == nil {
-		for _, device := range devices {
-			if device.Serial == serial {
-				return []lifxdevice.Serial{serial}, nil
-			}
-		}
-	}
-
-	for _, device := range devices {
-		if strings.ToLower(device.Label) == key ||
-			strings.ToLower(device.Group) == key ||
-			strings.ToLower(device.Location) == key {
-			add(device.Serial)
+	for _, selector := range splitSelectors(key) {
+		matches := resolveSelector(selector, devices)
+		for _, serial := range matches {
+			add(serial)
 		}
 	}
 
@@ -226,6 +210,47 @@ func (l *LifxDeviceController) resolveTarget(target string) ([]lifxdevice.Serial
 	}
 
 	return serials, nil
+}
+
+func splitSelectors(target string) []string {
+	parts := strings.Split(target, ",")
+	selectors := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			selectors = append(selectors, part)
+		}
+	}
+	return selectors
+}
+
+func resolveSelector(key string, devices []lifxdevice.Device) []lifxdevice.Serial {
+	var serials []lifxdevice.Serial
+
+	if key == "all" {
+		for _, device := range devices {
+			serials = append(serials, device.Serial)
+		}
+		return serials
+	}
+
+	if serial, err := lifxdevice.SerialFromHex(key); err == nil {
+		for _, device := range devices {
+			if device.Serial == serial {
+				return []lifxdevice.Serial{serial}
+			}
+		}
+	}
+
+	for _, device := range devices {
+		if strings.ToLower(device.Label) == key ||
+			strings.ToLower(device.Group) == key ||
+			strings.ToLower(device.Location) == key {
+			serials = append(serials, device.Serial)
+		}
+	}
+
+	return serials
 }
 
 func normalizePercent(value float64) float64 {
