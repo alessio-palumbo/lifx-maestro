@@ -163,7 +163,7 @@ func configForMode(mode Mode) (modeConfig, error) {
 		}, nil
 	case ModeEnergetic:
 		return modeConfig{
-			palette:       []float64{210, 285, 330},
+			palette:       []float64{80, 150, 180, 210, 285, 330, 360},
 			minBrightness: 0.55,
 			maxBrightness: 1.0,
 			minDurationMS: 45,

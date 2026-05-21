@@ -5,6 +5,7 @@ go 1.25
 require (
 	github.com/alessio-palumbo/lifxlan-go v0.3.6
 	github.com/gopxl/beep v1.4.1
+	github.com/urfave/cli/v3 v3.9.0
 )
 
 require (

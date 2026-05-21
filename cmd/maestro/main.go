@@ -3,10 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"os"
 	"os/signal"
+
+	"github.com/urfave/cli/v3"
 
 	"lifx-maestro/internal/analysis"
 	"lifx-maestro/internal/audio"
@@ -18,272 +19,223 @@ import (
 )
 
 func main() {
-	if err := run(os.Args[1:]); err != nil {
+	if err := newCommand().Run(context.Background(), os.Args); err != nil {
 		fmt.Fprintln(os.Stderr, "maestro:", err)
 		os.Exit(1)
 	}
 }
 
-func run(args []string) error {
-	if len(args) == 0 {
-		return usage()
-	}
-
-	switch args[0] {
-	case "analyze":
-		return analyze(args[1:])
-	case "generate":
-		return generate(args[1:])
-	case "perform":
-		return performCommand(args[1:])
-	case "play":
-		return play(args[1:])
-	default:
-		return usage()
+func newCommand() *cli.Command {
+	return &cli.Command{
+		Name:  "maestro",
+		Usage: "generate and play synchronized smart-light choreographies",
+		Commands: []*cli.Command{
+			analyzeCommand(),
+			generateCommand(),
+			performCommand(),
+			playCommand(),
+		},
 	}
 }
 
-func analyze(args []string) error {
-	flags := flag.NewFlagSet("analyze", flag.ContinueOnError)
-	flags.SetOutput(os.Stderr)
+func analyzeCommand() *cli.Command {
+	return &cli.Command{
+		Name:      "analyze",
+		Usage:     "analyze an audio file and print analysis JSON",
+		ArgsUsage: "<song.mp3|song.wav>",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "python", Value: "python3", Usage: "python executable"},
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			audioPath, err := singleArg(cmd, "maestro analyze [--python python3] <song.mp3|song.wav>")
+			if err != nil {
+				return err
+			}
+			if err := audio.ValidateInput(audioPath); err != nil {
+				return err
+			}
 
-	pythonPath := flags.String("python", "python3", "python executable")
+			ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
+			defer stop()
 
-	if err := flags.Parse(interspersedFlags(args, map[string]bool{"python": true})); err != nil {
-		return err
+			analyzer := analysis.NewAnalyzer()
+			analyzer.PythonPath = cmd.String("python")
+
+			result, err := analyzer.Analyze(ctx, audioPath)
+			if err != nil {
+				return err
+			}
+
+			encoded, err := json.MarshalIndent(result, "", "  ")
+			if err != nil {
+				return fmt.Errorf("encode analysis JSON: %w", err)
+			}
+			fmt.Fprintln(os.Stdout, string(encoded))
+			return nil
+		},
 	}
-	if flags.NArg() != 1 {
-		return fmt.Errorf("usage: maestro analyze [--python python3] <song.mp3|song.wav>")
-	}
-
-	audioPath := flags.Arg(0)
-	if err := audio.ValidateInput(audioPath); err != nil {
-		return err
-	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-
-	analyzer := analysis.NewAnalyzer()
-	analyzer.PythonPath = *pythonPath
-
-	result, err := analyzer.Analyze(ctx, audioPath)
-	if err != nil {
-		return err
-	}
-
-	encoded, err := json.MarshalIndent(result, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode analysis JSON: %w", err)
-	}
-	fmt.Fprintln(os.Stdout, string(encoded))
-	return nil
 }
 
-func generate(args []string) error {
-	flags := flag.NewFlagSet("generate", flag.ContinueOnError)
-	flags.SetOutput(os.Stderr)
+func generateCommand() *cli.Command {
+	return &cli.Command{
+		Name:      "generate",
+		Usage:     "analyze audio and write a generated timeline JSON file",
+		ArgsUsage: "<song.mp3|song.wav>",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "output", Usage: "timeline JSON output path"},
+			&cli.StringFlag{Name: "mode", Value: string(generation.ModeDefault), Usage: "generation mode: default, ambient, energetic"},
+			&cli.StringFlag{Name: "target", Value: "all", Usage: "timeline target selector"},
+			&cli.StringFlag{Name: "python", Value: "python3", Usage: "python executable"},
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			audioPath, err := singleArg(cmd, "maestro generate [--output projects/song.json] [--mode default|ambient|energetic] [--target all] [--python python3] <song.mp3|song.wav>")
+			if err != nil {
+				return err
+			}
+			if err := audio.ValidateInput(audioPath); err != nil {
+				return err
+			}
 
-	outputPath := flags.String("output", "", "timeline JSON output path")
-	mode := flags.String("mode", string(generation.ModeDefault), "generation mode: default, ambient, energetic")
-	target := flags.String("target", "all", "timeline target selector")
-	pythonPath := flags.String("python", "python3", "python executable")
+			outputPath := cmd.String("output")
+			if outputPath == "" {
+				outputPath = audio.DefaultTimelinePath(audioPath)
+			}
 
-	if err := flags.Parse(interspersedFlags(args, map[string]bool{
-		"output": true,
-		"mode":   true,
-		"target": true,
-		"python": true,
-	})); err != nil {
-		return err
+			ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
+			defer stop()
+
+			analyzer := analysis.NewAnalyzer()
+			analyzer.PythonPath = cmd.String("python")
+
+			result, err := analyzer.Analyze(ctx, audioPath)
+			if err != nil {
+				return err
+			}
+
+			tl, err := generation.Generate(*result, generation.Options{
+				Name:   audio.TimelineName(audioPath),
+				Target: cmd.String("target"),
+				Mode:   generation.Mode(cmd.String("mode")),
+			})
+			if err != nil {
+				return err
+			}
+
+			if err := timeline.Save(outputPath, tl); err != nil {
+				return err
+			}
+
+			fmt.Fprintf(os.Stdout, "generated %s (%d events, bpm %.3f)\n", outputPath, len(tl.Events), result.BPM)
+			return nil
+		},
 	}
-	if flags.NArg() != 1 {
-		return fmt.Errorf("usage: maestro generate [--output projects/song.json] [--mode default|ambient|energetic] [--target all] [--python python3] <song.mp3|song.wav>")
-	}
-
-	audioPath := flags.Arg(0)
-	if err := audio.ValidateInput(audioPath); err != nil {
-		return err
-	}
-	if *outputPath == "" {
-		*outputPath = audio.DefaultTimelinePath(audioPath)
-	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-
-	analyzer := analysis.NewAnalyzer()
-	analyzer.PythonPath = *pythonPath
-
-	result, err := analyzer.Analyze(ctx, audioPath)
-	if err != nil {
-		return err
-	}
-
-	tl, err := generation.Generate(*result, generation.Options{
-		Name:   audio.TimelineName(audioPath),
-		Target: *target,
-		Mode:   generation.Mode(*mode),
-	})
-	if err != nil {
-		return err
-	}
-
-	if err := timeline.Save(*outputPath, tl); err != nil {
-		return err
-	}
-
-	fmt.Fprintf(os.Stdout, "generated %s (%d events, bpm %.3f)\n", *outputPath, len(tl.Events), result.BPM)
-	return nil
 }
 
-func performCommand(args []string) error {
-	flags := flag.NewFlagSet("perform", flag.ContinueOnError)
-	flags.SetOutput(os.Stderr)
+func performCommand() *cli.Command {
+	return &cli.Command{
+		Name:      "perform",
+		Usage:     "analyze, generate, play audio, and perform synchronized lighting",
+		ArgsUsage: "<song.mp3>",
+		Flags: []cli.Flag{
+			&cli.BoolFlag{Name: "dry-run", Usage: "use mock device controller"},
+			&cli.BoolFlag{Name: "verbose", Usage: "print synchronization details"},
+			&cli.StringFlag{Name: "mode", Value: string(generation.ModeDefault), Usage: "generation mode: default, ambient, energetic"},
+			&cli.StringFlag{Name: "devices", Value: "all", Usage: "device selector"},
+			&cli.StringFlag{Name: "python", Value: "python3", Usage: "python executable"},
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			audioPath, err := singleArg(cmd, "maestro perform [--dry-run] [--verbose] [--mode default|ambient|energetic] [--devices all] [--python python3] <song.mp3>")
+			if err != nil {
+				return err
+			}
 
-	dryRun := flags.Bool("dry-run", false, "use mock device controller")
-	verbose := flags.Bool("verbose", false, "print synchronization details")
-	mode := flags.String("mode", string(generation.ModeDefault), "generation mode: default, ambient, energetic")
-	devicesTarget := flags.String("devices", "all", "device selector")
-	pythonPath := flags.String("python", "python3", "python executable")
+			var controller devices.DeviceController
+			if cmd.Bool("dry-run") {
+				controller = devices.NewMockDeviceController(os.Stdout)
+			} else {
+				lifxController, err := devices.NewLifxDeviceController()
+				if err != nil {
+					return err
+				}
+				defer lifxController.Close()
+				controller = lifxController
+			}
 
-	if err := flags.Parse(interspersedFlags(args, map[string]bool{
-		"mode":    true,
-		"devices": true,
-		"python":  true,
-	})); err != nil {
-		return err
+			ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
+			defer stop()
+
+			result, err := perform.Run(ctx, audioPath, controller, perform.Options{
+				Mode:       generation.Mode(cmd.String("mode")),
+				Target:     cmd.String("devices"),
+				PythonPath: cmd.String("python"),
+				Verbose:    cmd.Bool("verbose"),
+				Out:        os.Stdout,
+			})
+			if err != nil {
+				return err
+			}
+
+			if cmd.Bool("verbose") {
+				fmt.Fprintf(os.Stdout, "[perform] complete bpm=%.3f events=%d\n", result.Analysis.BPM, result.Events)
+			}
+			return nil
+		},
 	}
-	if flags.NArg() != 1 {
-		return fmt.Errorf("usage: maestro perform [--dry-run] [--verbose] [--mode default|ambient|energetic] [--devices all] [--python python3] <song.mp3>")
-	}
-
-	var controller devices.DeviceController
-	if *dryRun {
-		controller = devices.NewMockDeviceController(os.Stdout)
-	} else {
-		lifxController, err := devices.NewLifxDeviceController()
-		if err != nil {
-			return err
-		}
-		defer lifxController.Close()
-		controller = lifxController
-	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-
-	result, err := perform.Run(ctx, flags.Arg(0), controller, perform.Options{
-		Mode:       generation.Mode(*mode),
-		Target:     *devicesTarget,
-		PythonPath: *pythonPath,
-		Verbose:    *verbose,
-		Out:        os.Stdout,
-	})
-	if err != nil {
-		return err
-	}
-
-	if *verbose {
-		fmt.Fprintf(os.Stdout, "[perform] complete bpm=%.3f events=%d\n", result.Analysis.BPM, result.Events)
-	}
-	return nil
 }
 
-func play(args []string) error {
-	flags := flag.NewFlagSet("play", flag.ContinueOnError)
-	flags.SetOutput(os.Stderr)
+func playCommand() *cli.Command {
+	return &cli.Command{
+		Name:      "play",
+		Usage:     "play a timeline JSON file",
+		ArgsUsage: "<timeline.json>",
+		Flags: []cli.Flag{
+			&cli.BoolFlag{Name: "dry-run", Usage: "use mock device controller"},
+			&cli.BoolFlag{Name: "verbose", Usage: "print timeline and scheduler details"},
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			timelinePath, err := singleArg(cmd, "maestro play [--dry-run] [--verbose] <timeline.json>")
+			if err != nil {
+				return err
+			}
 
-	dryRun := flags.Bool("dry-run", false, "use mock device controller")
-	verbose := flags.Bool("verbose", false, "print timeline details before playback")
+			tl, err := timeline.Load(timelinePath)
+			if err != nil {
+				return err
+			}
 
-	if err := flags.Parse(interspersedFlags(args, map[string]bool{})); err != nil {
-		return err
+			if cmd.Bool("verbose") {
+				fmt.Fprintf(os.Stdout, "timeline=%q duration_ms=%d events=%d dry_run=%t\n", tl.Name, tl.DurationMS, len(tl.Events), cmd.Bool("dry-run"))
+			}
+
+			var controller devices.DeviceController
+			if cmd.Bool("dry-run") {
+				controller = devices.NewMockDeviceController(os.Stdout)
+			} else {
+				lifxController, err := devices.NewLifxDeviceController()
+				if err != nil {
+					return err
+				}
+				defer lifxController.Close()
+				controller = lifxController
+			}
+
+			ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
+			defer stop()
+
+			player := playback.NewPlayer(controller, playback.Options{
+				DryRun:  cmd.Bool("dry-run"),
+				Verbose: cmd.Bool("verbose"),
+				Out:     os.Stdout,
+			})
+
+			return player.Play(ctx, tl)
+		},
 	}
-	if flags.NArg() != 1 {
-		return fmt.Errorf("usage: maestro play [--dry-run] [--verbose] <timeline.json>")
-	}
-
-	tl, err := timeline.Load(flags.Arg(0))
-	if err != nil {
-		return err
-	}
-
-	if *verbose {
-		fmt.Fprintf(os.Stdout, "timeline=%q duration_ms=%d events=%d dry_run=%t\n", tl.Name, tl.DurationMS, len(tl.Events), *dryRun)
-	}
-
-	var controller devices.DeviceController
-	if *dryRun {
-		controller = devices.NewMockDeviceController(os.Stdout)
-	} else {
-		lifxController, err := devices.NewLifxDeviceController()
-		if err != nil {
-			return err
-		}
-		defer lifxController.Close()
-		controller = lifxController
-	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-
-	player := playback.NewPlayer(controller, playback.Options{
-		DryRun:  *dryRun,
-		Verbose: *verbose,
-		Out:     os.Stdout,
-	})
-
-	return player.Play(ctx, tl)
 }
 
-func usage() error {
-	return fmt.Errorf("usage: maestro <analyze|generate|play> [options]")
-}
-
-func interspersedFlags(args []string, valueFlags map[string]bool) []string {
-	var flags []string
-	var positional []string
-
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		if arg == "--" {
-			positional = append(positional, args[i+1:]...)
-			break
-		}
-		if len(arg) < 2 || arg[0] != '-' {
-			positional = append(positional, arg)
-			continue
-		}
-
-		flags = append(flags, arg)
-		name := flagName(arg)
-		if valueFlags[name] && !hasInlineFlagValue(arg) && i+1 < len(args) {
-			i++
-			flags = append(flags, args[i])
-		}
+func singleArg(cmd *cli.Command, usage string) (string, error) {
+	if cmd.Args().Len() != 1 {
+		return "", fmt.Errorf("usage: %s", usage)
 	}
-
-	return append(flags, positional...)
-}
-
-func flagName(arg string) string {
-	for len(arg) > 0 && arg[0] == '-' {
-		arg = arg[1:]
-	}
-	for i, r := range arg {
-		if r == '=' {
-			return arg[:i]
-		}
-	}
-	return arg
-}
-
-func hasInlineFlagValue(arg string) bool {
-	for _, r := range arg {
-		if r == '=' {
-			return true
-		}
-	}
-	return false
+	return cmd.Args().First(), nil
 }
