@@ -7,6 +7,7 @@ import (
 	"lifx-maestro/internal/analysis"
 	"lifx-maestro/internal/devices"
 	"lifx-maestro/internal/effects"
+	"lifx-maestro/internal/rendering"
 	"lifx-maestro/internal/sections"
 	"lifx-maestro/internal/styles"
 	"lifx-maestro/internal/timeline"
@@ -56,6 +57,9 @@ func Generate(song analysis.SongAnalysis, options Options) (*timeline.Timeline, 
 	}
 
 	for i, section := range songSections {
+		if i > 0 {
+			tl.Events = append(tl.Events, transitionEvents(song, section, style, targets, i)...)
+		}
 		tl.Events = append(tl.Events, sectionEvents(song, section, style, targets, i)...)
 	}
 
@@ -114,6 +118,79 @@ func sectionEvents(song analysis.SongAnalysis, section sections.Section, style s
 func fallbackEvents(song analysis.SongAnalysis, style styles.Style, targets []effects.Target) []timeline.Event {
 	section := sections.Section{StartMS: 0, EndMS: song.DurationMS, Type: sections.TypeDrop, Energy: 0.5}
 	return sectionEvents(song, section, style, targets, 0)
+}
+
+func transitionEvents(song analysis.SongAnalysis, section sections.Section, style styles.Style, targets []effects.Target, sectionIndex int) []timeline.Event {
+	if len(targets) == 0 {
+		return nil
+	}
+
+	beatMS := beatDurationMS(song.BPM)
+	pulses := transitionPulseCount(section.Type)
+	if pulses == 0 {
+		return nil
+	}
+	durationMS := maxInt64(40, beatMS/4)
+	brightness := clamp(maxBrightness(section, style)*1.15, 0.18, 1.0)
+	kind := rendering.IntentPulse
+
+	switch section.Type {
+	case sections.TypeBuild:
+		kind = rendering.IntentPulse
+	case sections.TypeDrop:
+		kind = rendering.IntentSweep
+	case sections.TypeBreakdown:
+		brightness *= 0.75
+	case sections.TypeOutro:
+		brightness *= 0.62
+	}
+
+	var events []timeline.Event
+	for pulse := 0; pulse < pulses; pulse++ {
+		timeMS := section.StartMS + beatMS/2 + int64(pulse)*beatMS
+		if timeMS >= section.EndMS {
+			break
+		}
+		for targetOffset, target := range targets {
+			beatIndex := sectionIndex + pulse + targetOffset
+			events = append(events, rendering.Render(rendering.EffectIntent{
+				Kind:        kind,
+				TimeMS:      timeMS,
+				Target:      target.DeviceID,
+				Color:       style.Palette.AccentForBeat(beatIndex),
+				Palette:     style.Palette,
+				Brightness:  brightness,
+				DurationMS:  durationMS,
+				BeatIndex:   beatIndex,
+				Section:     string(section.Type),
+				DeviceIndex: target.Index,
+				DeviceTotal: target.Total,
+				Supported:   rendering.SupportedDeviceKinds{SingleZone: true, MultiZone: true, Matrix: true},
+			}, devices.DeviceInfo{ID: target.DeviceID, Capabilities: target.Capabilities})...)
+		}
+	}
+	return events
+}
+
+func transitionPulseCount(sectionType sections.Type) int {
+	switch sectionType {
+	case sections.TypeBuild:
+		return 4
+	case sections.TypeDrop:
+		return 8
+	case sections.TypeBreakdown, sections.TypeOutro:
+		return 3
+	default:
+		return 0
+	}
+}
+
+func beatDurationMS(bpm float64) int64 {
+	beatMS := int64(500)
+	if bpm > 0 {
+		beatMS = int64(60000 / bpm)
+	}
+	return clampInt64(beatMS, 220, 1200)
 }
 
 func styleName(options Options) string {
@@ -289,6 +366,16 @@ func maxInt64(a, b int64) int64 {
 		return a
 	}
 	return b
+}
+
+func clampInt64(value, min, max int64) int64 {
+	if value < min {
+		return min
+	}
+	if value > max {
+		return max
+	}
+	return value
 }
 
 func maxInt(a, b int) int {

@@ -31,7 +31,7 @@ def main():
         "bpm": round(tempo, 3),
         "beats": beats,
         "energy": energy,
-        "sections": sections(duration_ms, energy),
+        "sections": sections(y, sr, duration_ms, energy, onset_env, tempo),
     }
     print(json.dumps(result, separators=(",", ":")))
     return 0
@@ -77,16 +77,239 @@ def downsample_energy(times, values, step_ms):
     return points
 
 
-def sections(duration_ms, energy):
+def sections(y, sr, duration_ms, energy, onset_env, tempo):
+    detected = feature_sections(y, sr, duration_ms, energy, onset_env, tempo)
+    if detected:
+        return detected
+    return fallback_sections(duration_ms, energy)
+
+
+def feature_sections(y, sr, duration_ms, energy, onset_env, tempo):
+    if duration_ms <= 0:
+        return []
+
+    try:
+        features, times_ms = section_features(y, sr, onset_env)
+        if len(times_ms) < 8:
+            return []
+
+        binned, bin_times = bin_features(features, times_ms, step_ms=1000)
+        if len(bin_times) < 8:
+            return []
+
+        novelty = novelty_curve(binned)
+        boundaries = pick_boundaries(novelty, bin_times, duration_ms)
+        if len(boundaries) < 4:
+            return []
+
+        boundaries = insert_pre_drop_builds(boundaries, duration_ms, energy, tempo)
+        return label_sections(boundaries, duration_ms, energy)
+    except Exception:
+        return []
+
+
+def section_features(y, sr, onset_env):
+    hop_length = 512
+    rms = librosa.feature.rms(y=y, frame_length=2048, hop_length=hop_length)[0]
+    centroid = librosa.feature.spectral_centroid(y=y, sr=sr, hop_length=hop_length)[0]
+    bandwidth = librosa.feature.spectral_bandwidth(y=y, sr=sr, hop_length=hop_length)[0]
+    rolloff = librosa.feature.spectral_rolloff(y=y, sr=sr, hop_length=hop_length)[0]
+    zcr = librosa.feature.zero_crossing_rate(y, frame_length=2048, hop_length=hop_length)[0]
+
+    min_len = min(len(rms), len(onset_env), len(centroid), len(bandwidth), len(rolloff), len(zcr))
+    if min_len == 0:
+        return np.empty((0, 0)), np.array([])
+
+    stacked = np.vstack([
+        normalize(rms[:min_len]),
+        normalize(onset_env[:min_len]),
+        normalize(centroid[:min_len]),
+        normalize(bandwidth[:min_len]),
+        normalize(rolloff[:min_len]),
+        normalize(zcr[:min_len]),
+    ]).T
+    times_ms = librosa.frames_to_time(np.arange(min_len), sr=sr, hop_length=hop_length) * 1000
+    return stacked, times_ms
+
+
+def bin_features(features, times_ms, step_ms):
+    if len(features) == 0:
+        return np.empty((0, 0)), np.array([])
+
+    bins = []
+    bin_times = []
+    next_ms = 0
+    bucket = []
+
+    for feature, time_ms in zip(features, times_ms):
+        while time_ms >= next_ms + step_ms:
+            if bucket:
+                bins.append(np.mean(bucket, axis=0))
+                bin_times.append(next_ms)
+                bucket = []
+            next_ms += step_ms
+        bucket.append(feature)
+
+    if bucket:
+        bins.append(np.mean(bucket, axis=0))
+        bin_times.append(next_ms)
+
+    return np.asarray(bins), np.asarray(bin_times)
+
+
+def novelty_curve(features):
+    if len(features) < 2:
+        return np.array([])
+
+    smoothed = smooth_rows(features, width=3)
+    delta = np.diff(smoothed, axis=0)
+    novelty = np.linalg.norm(delta, axis=1)
+
+    energy_delta = np.maximum(delta[:, 0], 0)
+    onset_delta = np.maximum(delta[:, 1], 0)
+    novelty = novelty + energy_delta * 0.75 + onset_delta * 0.5
+    return normalize(novelty)
+
+
+def smooth_rows(values, width):
+    if len(values) < width:
+        return values
+    out = np.empty_like(values)
+    radius = width // 2
+    for i in range(len(values)):
+        start = max(0, i - radius)
+        end = min(len(values), i + radius + 1)
+        out[i] = np.mean(values[start:end], axis=0)
+    return out
+
+
+def pick_boundaries(novelty, bin_times, duration_ms):
+    if len(novelty) == 0:
+        return []
+
+    min_section_ms = min(8000, max(5000, int(duration_ms * 0.045)))
+    edge_guard_ms = min(10000, max(4000, int(duration_ms * 0.035)))
+    threshold = max(float(np.percentile(novelty, 68)), float(np.mean(novelty) + np.std(novelty) * 0.2))
+    candidates = []
+
+    for i, value in enumerate(novelty):
+        time_ms = int(bin_times[i + 1]) if i + 1 < len(bin_times) else int(bin_times[i])
+        if time_ms < edge_guard_ms or time_ms > duration_ms - edge_guard_ms:
+            continue
+        prev_value = novelty[i - 1] if i > 0 else -1
+        next_value = novelty[i + 1] if i + 1 < len(novelty) else -1
+        if value >= threshold and value >= prev_value and value >= next_value:
+            candidates.append((time_ms, float(value)))
+
+    if not candidates:
+        return []
+
+    selected = []
+    for time_ms, score in sorted(candidates, key=lambda item: item[1], reverse=True):
+        if all(abs(time_ms - existing) >= min_section_ms for existing in selected):
+            selected.append(time_ms)
+        if len(selected) >= 6:
+            break
+
+    selected.sort()
+    return [0] + selected + [duration_ms]
+
+
+def insert_pre_drop_builds(boundaries, duration_ms, energy, tempo):
+    if len(boundaries) < 3:
+        return boundaries
+
+    beat_ms = 500
+    if tempo > 0:
+        beat_ms = int(round(60000 / tempo))
+    build_window_ms = clamp_int(beat_ms * 16, 6000, 10000)
+
+    out = [boundaries[0]]
+    for i in range(1, len(boundaries) - 1):
+        boundary = boundaries[i]
+        previous = out[-1]
+        next_boundary = boundaries[i + 1]
+
+        before_energy = mean_energy(energy, max(previous, boundary - build_window_ms), boundary)
+        after_energy = mean_energy(energy, boundary, min(next_boundary, boundary + build_window_ms))
+        build_start = boundary - build_window_ms
+
+        if (
+            after_energy >= 0.45
+            and after_energy >= before_energy + 0.12
+            and build_start - previous >= 5000
+            and boundary - build_start >= 5000
+        ):
+            out.append(build_start)
+
+        out.append(boundary)
+
+    out.append(boundaries[-1])
+    deduped = []
+    for boundary in out:
+        if not deduped or boundary != deduped[-1]:
+            deduped.append(int(clamp_int(boundary, 0, duration_ms)))
+    return deduped
+
+
+def label_sections(boundaries, duration_ms, energy):
+    if len(boundaries) < 3:
+        return []
+
+    segment_energies = [
+        mean_energy(energy, boundaries[i], boundaries[i + 1])
+        for i in range(len(boundaries) - 1)
+    ]
+    high_threshold = max(0.55, float(np.percentile(segment_energies, 65)))
+    low_threshold = min(0.35, float(np.percentile(segment_energies, 35)))
+
+    result = []
+    for i in range(len(boundaries) - 1):
+        start_ms = int(boundaries[i])
+        end_ms = int(boundaries[i + 1])
+        value = segment_energies[i]
+        prev_value = segment_energies[i - 1] if i > 0 else value
+        next_value = segment_energies[i + 1] if i + 1 < len(segment_energies) else value
+
+        if i == 0 and start_ms < duration_ms * 0.18:
+            label = "intro"
+        elif i == len(segment_energies) - 1:
+            label = "outro"
+        elif value >= high_threshold:
+            label = "drop"
+        elif next_value >= max(0.45, high_threshold - 0.05) and next_value > value + 0.08:
+            label = "build"
+        elif prev_value >= high_threshold and value <= prev_value - 0.12:
+            label = "breakdown"
+        elif value <= low_threshold:
+            label = "breakdown"
+        elif next_value > value + 0.06:
+            label = "build"
+        else:
+            label = "drop" if value >= 0.48 else "breakdown"
+
+        result.append({
+            "start_ms": start_ms,
+            "end_ms": end_ms,
+            "type": label,
+            "energy": round(float(value), 4),
+        })
+
+    return result
+
+
+def fallback_sections(duration_ms, energy):
     if duration_ms <= 0:
         return []
 
     boundaries = [
-        (0.00, 0.16, "intro"),
-        (0.16, 0.36, "build"),
-        (0.36, 0.68, "drop"),
-        (0.68, 0.86, "breakdown"),
-        (0.86, 1.00, "outro"),
+        (0.00, 0.12, "intro"),
+        (0.12, 0.18, "build"),
+        (0.18, 0.50, "drop"),
+        (0.50, 0.62, "breakdown"),
+        (0.62, 0.72, "build"),
+        (0.72, 0.88, "drop"),
+        (0.88, 1.00, "outro"),
     ]
     result = []
     for start_ratio, end_ratio, label in boundaries:
@@ -106,6 +329,10 @@ def mean_energy(energy, start_ms, end_ms):
     if not values:
         return 0.5
     return float(np.mean(values))
+
+
+def clamp_int(value, min_value, max_value):
+    return max(min_value, min(int(value), max_value))
 
 
 if __name__ == "__main__":

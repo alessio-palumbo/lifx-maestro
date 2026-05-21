@@ -162,6 +162,33 @@ func TestGenerateKeepsBreakdownResponsive(t *testing.T) {
 	}
 }
 
+func TestGenerateAddsSectionTransitionAccents(t *testing.T) {
+	tl, err := Generate(analysis.SongAnalysis{
+		DurationMS: 30000,
+		BPM:        120,
+		Beats:      beatsEvery(0, 30000, 500),
+		Energy: []analysis.EnergyPoint{
+			{TimeMS: 0, Value: 0.2},
+			{TimeMS: 15000, Value: 0.9},
+		},
+		Sections: []analysis.Section{
+			{StartMS: 0, EndMS: 16000, Type: "intro", Energy: 0.2},
+			{StartMS: 16000, EndMS: 24000, Type: "build", Energy: 0.55},
+			{StartMS: 24000, EndMS: 30000, Type: "drop", Energy: 0.9},
+		},
+	}, Options{Name: "song", Target: "desk"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if countEventsBetween(tl.Events, 16000, 18000) < 4 {
+		t.Fatal("expected build transition accents near 00:16")
+	}
+	if countEventsBetween(tl.Events, 24000, 27000) < 8 {
+		t.Fatal("expected drop transition accents near 00:24")
+	}
+}
+
 func hasSetColorEvent(events []timeline.Event) bool {
 	for _, event := range events {
 		if event.Action == "set_color" {
@@ -209,6 +236,16 @@ func beatsEvery(start, end, step int64) []int64 {
 		beats = append(beats, t)
 	}
 	return beats
+}
+
+func countEventsBetween(events []timeline.Event, start, end int64) int {
+	var count int
+	for _, event := range events {
+		if event.Action != "power_on" && event.TimeMS >= start && event.TimeMS < end {
+			count++
+		}
+	}
+	return count
 }
 
 func firstSetColorParams(t *testing.T, events []timeline.Event) timeline.SetColorParams {

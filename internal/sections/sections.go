@@ -42,11 +42,13 @@ func fallback(song analysis.SongAnalysis) []Section {
 		end   float64
 		typ   Type
 	}{
-		{0.00, 0.16, TypeIntro},
-		{0.16, 0.36, TypeBuild},
-		{0.36, 0.68, TypeDrop},
-		{0.68, 0.86, TypeBreakdown},
-		{0.86, 1.00, TypeOutro},
+		{0.00, 0.12, TypeIntro},
+		{0.12, 0.18, TypeBuild},
+		{0.18, 0.50, TypeDrop},
+		{0.50, 0.62, TypeBreakdown},
+		{0.62, 0.72, TypeBuild},
+		{0.72, 0.88, TypeDrop},
+		{0.88, 1.00, TypeOutro},
 	}
 
 	sections := make([]Section, 0, len(bounds))
