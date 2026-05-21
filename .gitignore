@@ -1,0 +1,27 @@
+# OS/editor noise
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Go build/test output
+bin/
+dist/
+coverage.out
+*.test
+
+# Python environments and caches
+.venv/
+venv/
+analyzer/.venv/
+__pycache__/
+*.py[cod]
+
+# Generated local project output
+projects/*.json
+!projects/demo.json
+
+# Local audio samples can be large or copyrighted. Keep explicit demo assets trackable.
+samples/*
+!samples/.gitkeep
+!samples/demo.*

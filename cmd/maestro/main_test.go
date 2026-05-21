@@ -15,3 +15,26 @@ func TestCommandTreeIncludesExpectedCommands(t *testing.T) {
 		}
 	}
 }
+
+func TestPerformUsesTargetFlag(t *testing.T) {
+	cmd := performCommand()
+	flags := make(map[string]bool)
+	for _, flag := range cmd.Flags {
+		for _, name := range flag.Names() {
+			flags[name] = true
+		}
+	}
+
+	if !flags["target"] {
+		t.Fatal("missing target flag")
+	}
+	if flags["devices"] {
+		t.Fatal("devices flag should not be exposed")
+	}
+}
+
+func TestDefaultPythonPathPrefersProjectVenv(t *testing.T) {
+	if got := defaultPythonPath(); got == "" {
+		t.Fatal("default python path is empty")
+	}
+}

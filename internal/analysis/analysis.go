@@ -122,7 +122,7 @@ func (s SongAnalysis) Validate() error {
 func defaultScriptPath() string {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
-		return filepath.Join("python", "analyze.py")
+		return filepath.Join("analyzer", "analyze.py")
 	}
-	return filepath.Join(filepath.Dir(file), "..", "..", "python", "analyze.py")
+	return filepath.Join(filepath.Dir(file), "..", "..", "analyzer", "analyze.py")
 }

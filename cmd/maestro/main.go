@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime"
 
 	"github.com/urfave/cli/v3"
 
@@ -78,10 +79,10 @@ func analyzeCommand() *cli.Command {
 		Usage:     "analyze an audio file and print analysis JSON",
 		ArgsUsage: "<song.mp3|song.wav>",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "python", Value: "python3", Usage: "python executable"},
+			&cli.StringFlag{Name: "python", Value: defaultPythonPath(), Usage: "python executable"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			audioPath, err := singleArg(cmd, "maestro analyze [--python python3] <song.mp3|song.wav>")
+			audioPath, err := singleArg(cmd, "maestro analyze [--python analyzer/.venv/bin/python] <song.mp3|song.wav>")
 			if err != nil {
 				return err
 			}
@@ -119,10 +120,10 @@ func generateCommand() *cli.Command {
 			&cli.StringFlag{Name: "output", Usage: "timeline JSON output path"},
 			&cli.StringFlag{Name: "style", Usage: "generation style"},
 			&cli.StringFlag{Name: "target", Value: "all", Usage: "timeline target selector"},
-			&cli.StringFlag{Name: "python", Value: "python3", Usage: "python executable"},
+			&cli.StringFlag{Name: "python", Value: defaultPythonPath(), Usage: "python executable"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			audioPath, err := singleArg(cmd, "maestro generate [--output projects/song.json] [--style synthwave] [--target all] [--python python3] <song.mp3|song.wav>")
+			audioPath, err := singleArg(cmd, "maestro generate [--output projects/song.json] [--style synthwave] [--target all] [--python analyzer/.venv/bin/python] <song.mp3|song.wav>")
 			if err != nil {
 				return err
 			}
@@ -174,14 +175,15 @@ func performCommand() *cli.Command {
 			&cli.BoolFlag{Name: "dry-run", Usage: "use mock device controller"},
 			&cli.BoolFlag{Name: "verbose", Usage: "print synchronization details"},
 			&cli.StringFlag{Name: "style", Usage: "generation style"},
-			&cli.StringFlag{Name: "devices", Value: "all", Usage: "device selector"},
-			&cli.StringFlag{Name: "python", Value: "python3", Usage: "python executable"},
+			&cli.StringFlag{Name: "target", Value: "all", Usage: "target selector"},
+			&cli.StringFlag{Name: "python", Value: defaultPythonPath(), Usage: "python executable"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			audioPath, err := singleArg(cmd, "maestro perform [--dry-run] [--verbose] [--style synthwave] [--devices all] [--python python3] <song.mp3>")
+			audioPath, err := singleArg(cmd, "maestro perform [--dry-run] [--verbose] [--style synthwave] [--target all] [--python analyzer/.venv/bin/python] <song.mp3>")
 			if err != nil {
 				return err
 			}
+			target := cmd.String("target")
 
 			var controller devices.DeviceController
 			if cmd.Bool("dry-run") {
@@ -194,14 +196,14 @@ func performCommand() *cli.Command {
 				defer closeController(lifxController)
 				controller = lifxController
 			}
-			defer setupStateRestore(controller, cmd.String("devices"))()
+			defer setupStateRestore(controller, target)()
 
 			ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
 			defer stop()
 
 			result, err := perform.Run(ctx, audioPath, controller, perform.Options{
 				Style:      cmd.String("style"),
-				Target:     cmd.String("devices"),
+				Target:     target,
 				PythonPath: cmd.String("python"),
 				Verbose:    cmd.Bool("verbose"),
 				Out:        os.Stdout,
@@ -311,6 +313,28 @@ func closeController(controller interface{ Close() error }) {
 	if err := controller.Close(); err != nil {
 		fmt.Fprintf(os.Stderr, "maestro: close controller: %v\n", err)
 	}
+}
+
+func defaultPythonPath() string {
+	candidates := []string{
+		"analyzer/.venv/bin/python",
+		".venv/bin/python",
+	}
+	if runtime.GOOS == "windows" {
+		candidates = []string{
+			"analyzer/.venv/Scripts/python.exe",
+			".venv/Scripts/python.exe",
+		}
+	}
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	if runtime.GOOS == "windows" {
+		return "python"
+	}
+	return "python3"
 }
 
 func displayName(info devices.DeviceInfo) string {

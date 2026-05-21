@@ -27,17 +27,20 @@ go mod tidy
 Install Python audio-analysis dependencies:
 
 ```bash
-pip install -r python/requirements.txt
+python3 -m venv analyzer/.venv
+analyzer/.venv/bin/python -m pip install -r analyzer/requirements.txt
 ```
 
-If your Python is externally managed, use a virtual environment:
+The CLI automatically prefers `analyzer/.venv/bin/python` when it exists. You can still override the executable with `--python`.
+
+If your Python is externally managed and you prefer a repo-root venv, that is also detected:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/python -m pip install -r python/requirements.txt
+.venv/bin/python -m pip install -r analyzer/requirements.txt
 ```
 
-Then pass the venv Python to commands that analyze audio:
+Override explicitly when needed:
 
 ```bash
 go run ./cmd/maestro analyze samples/song.mp3 --python .venv/bin/python
@@ -66,7 +69,7 @@ go run ./cmd/maestro play projects/song.json
 Analyze, generate, play audio, and control lights in one command:
 
 ```bash
-go run ./cmd/maestro perform samples/song.mp3 --style cinematic --devices all
+go run ./cmd/maestro perform samples/song.mp3 --style cinematic --target all
 ```
 
 Test the full perform flow without touching real lights:
@@ -93,7 +96,7 @@ go run ./cmd/maestro analyze <song.mp3|song.wav>
 
 Options:
 
-- `--python string`: Python executable to use. Default: `python3`
+- `--python string`: Python executable to use. Default: `analyzer/.venv/bin/python` when present, then `.venv/bin/python`, then `python3`
 
 Example:
 
@@ -122,7 +125,7 @@ Options:
 - `--output string`: timeline JSON output path. If omitted, writes to `projects/<song-name>.json`
 - `--style string`: generation style
 - `--target string`: timeline target selector. Default: `all`
-- `--python string`: Python executable. Default: `python3`
+- `--python string`: Python executable. Default: `analyzer/.venv/bin/python` when present, then `.venv/bin/python`, then `python3`
 
 Examples:
 
@@ -145,19 +148,21 @@ Options:
 - `--dry-run`: use the mock controller instead of real LIFX devices
 - `--verbose`: print analysis, scheduler, and playback logs
 - `--style string`: generation style
-- `--devices string`: device selector. Default: `all`
-- `--python string`: Python executable. Default: `python3`
+- `--target string`: target selector. Default: `all`
+- `--python string`: Python executable. Default: `analyzer/.venv/bin/python` when present, then `.venv/bin/python`, then `python3`
 
 Examples:
 
 ```bash
 go run ./cmd/maestro perform samples/song.mp3 --dry-run --verbose
-go run ./cmd/maestro perform samples/song.mp3 --style synthwave --devices all
-go run ./cmd/maestro perform samples/song.mp3 --style cinematic --devices desk
-go run ./cmd/maestro perform samples/song.mp3 --style neon --devices tv,desk
+go run ./cmd/maestro perform samples/song.mp3 --style synthwave --target all
+go run ./cmd/maestro perform samples/song.mp3 --style cinematic --target desk
+go run ./cmd/maestro perform samples/song.mp3 --style neon --target tv,desk
 ```
 
 During `perform`, audio playback owns the master clock. The lighting scheduler follows the audio position rather than using an independent wall-clock timer.
+
+You do not need to run `generate` before `perform`. `perform` analyzes and generates an in-memory timeline for the current run. Use `generate` when you want to inspect, save, or replay a timeline separately with `play`.
 
 ### `maestro devices`
 
@@ -256,11 +261,11 @@ For generated timelines, `--target` sets the target written into the JSON:
 go run ./cmd/maestro generate samples/song.mp3 --target desk
 ```
 
-For live performance, `--devices` selects devices:
+For live performance, `--target` selects targets:
 
 ```bash
-go run ./cmd/maestro perform samples/song.mp3 --devices all
-go run ./cmd/maestro perform samples/song.mp3 --devices tv,desk
+go run ./cmd/maestro perform samples/song.mp3 --target all
+go run ./cmd/maestro perform samples/song.mp3 --target tv,desk
 ```
 
 When using real LIFX devices, the controller discovers devices on the local network and exposes basic capabilities:
@@ -395,13 +400,13 @@ go test ./...
 Check the Python analyzer syntax:
 
 ```bash
-python3 -m py_compile python/analyze.py
+python3 -m py_compile analyzer/analyze.py
 ```
 
 ## Current Limitations
 
 - Audio playback in `perform` currently supports MP3.
-- Audio analysis depends on Python packages from `python/requirements.txt`.
+- Audio analysis depends on Python packages from `analyzer/requirements.txt`.
 - Section detection is heuristic and approximate.
 - Multizone and matrix rendering is intentionally simple: gradients, sweeps, pulses, and full color arrays only.
 - No GUI, AI generation, waveform view, or timeline editor yet.
