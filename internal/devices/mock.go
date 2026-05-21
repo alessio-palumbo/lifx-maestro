@@ -42,6 +42,16 @@ func (m *MockDeviceController) SetColor(target string, params ColorParams) error
 	return nil
 }
 
+func (m *MockDeviceController) CaptureState(target string) error {
+	m.print(target, "capture_state")
+	return nil
+}
+
+func (m *MockDeviceController) RestoreState() error {
+	m.print("all", "restore_state")
+	return nil
+}
+
 func (m *MockDeviceController) print(target, action string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

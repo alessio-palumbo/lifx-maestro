@@ -13,3 +13,8 @@ type DeviceController interface {
 	PowerOff(target string) error
 	SetColor(target string, params ColorParams) error
 }
+
+type StateRestorer interface {
+	CaptureState(target string) error
+	RestoreState() error
+}

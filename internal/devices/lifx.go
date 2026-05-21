@@ -15,6 +15,13 @@ const discoverySettlingDelay = time.Second
 
 type LifxDeviceController struct {
 	controller *controller.Controller
+	snapshots  []stateSnapshot
+}
+
+type stateSnapshot struct {
+	serial    lifxdevice.Serial
+	poweredOn bool
+	color     lifxdevice.Color
 }
 
 func NewLifxDeviceController() (*LifxDeviceController, error) {
@@ -60,6 +67,72 @@ func (l *LifxDeviceController) SetColor(target string, params ColorParams) error
 		duration,
 		0,
 	))
+}
+
+func (l *LifxDeviceController) CaptureState(target string) error {
+	if l.controller == nil {
+		return fmt.Errorf("lifx controller is not initialized")
+	}
+
+	serials, err := l.resolveTarget(target)
+	if err != nil {
+		return err
+	}
+
+	serialSet := make(map[lifxdevice.Serial]bool, len(serials))
+	for _, serial := range serials {
+		serialSet[serial] = true
+	}
+
+	devices := l.controller.GetDevices()
+	snapshots := make([]stateSnapshot, 0, len(serials))
+	for _, device := range devices {
+		if !serialSet[device.Serial] {
+			continue
+		}
+		snapshots = append(snapshots, stateSnapshot{
+			serial:    device.Serial,
+			poweredOn: device.PoweredOn,
+			color:     device.Color,
+		})
+	}
+	if len(snapshots) == 0 {
+		return fmt.Errorf("no LIFX device states captured for target %q", target)
+	}
+
+	l.snapshots = snapshots
+	return nil
+}
+
+func (l *LifxDeviceController) RestoreState() error {
+	if l.controller == nil || len(l.snapshots) == 0 {
+		return nil
+	}
+
+	var restoreErr error
+	for _, snapshot := range l.snapshots {
+		target := snapshot.serial.String()
+		if err := l.SetColor(target, ColorParams{
+			Hue:        snapshot.color.Hue,
+			Saturation: snapshot.color.Saturation,
+			Brightness: snapshot.color.Brightness,
+			Kelvin:     int(snapshot.color.Kelvin),
+			DurationMS: 500,
+		}); err != nil && restoreErr == nil {
+			restoreErr = err
+		}
+
+		var err error
+		if snapshot.poweredOn {
+			err = l.PowerOn(target)
+		} else {
+			err = l.PowerOff(target)
+		}
+		if err != nil && restoreErr == nil {
+			restoreErr = err
+		}
+	}
+	return restoreErr
 }
 
 func (l *LifxDeviceController) send(target string, msg *protocol.Message) error {

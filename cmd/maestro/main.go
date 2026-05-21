@@ -157,9 +157,10 @@ func performCommand() *cli.Command {
 				if err != nil {
 					return err
 				}
-				defer lifxController.Close()
+				defer closeController(lifxController)
 				controller = lifxController
 			}
+			defer setupStateRestore(controller, cmd.String("devices"))()
 
 			ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
 			defer stop()
@@ -215,9 +216,10 @@ func playCommand() *cli.Command {
 				if err != nil {
 					return err
 				}
-				defer lifxController.Close()
+				defer closeController(lifxController)
 				controller = lifxController
 			}
+			defer setupStateRestore(controller, "all")()
 
 			ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
 			defer stop()
@@ -238,4 +240,28 @@ func singleArg(cmd *cli.Command, usage string) (string, error) {
 		return "", fmt.Errorf("usage: %s", usage)
 	}
 	return cmd.Args().First(), nil
+}
+
+func setupStateRestore(controller devices.DeviceController, target string) func() {
+	restorer, ok := controller.(devices.StateRestorer)
+	if !ok {
+		return func() {}
+	}
+
+	if err := restorer.CaptureState(target); err != nil {
+		fmt.Fprintf(os.Stderr, "maestro: capture state: %v\n", err)
+		return func() {}
+	}
+
+	return func() {
+		if err := restorer.RestoreState(); err != nil {
+			fmt.Fprintf(os.Stderr, "maestro: restore state: %v\n", err)
+		}
+	}
+}
+
+func closeController(controller interface{ Close() error }) {
+	if err := controller.Close(); err != nil {
+		fmt.Fprintf(os.Stderr, "maestro: close controller: %v\n", err)
+	}
 }
