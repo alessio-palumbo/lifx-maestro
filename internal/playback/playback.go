@@ -130,6 +130,18 @@ func (p *Player) execute(scheduled scheduler.Event) error {
 			return fmt.Errorf("event %d: %w", scheduled.Index, err)
 		}
 		return p.controller.SetColor(event.Target, params)
+	case "set_zone_colors":
+		params, err := zoneColorParams(event.Params)
+		if err != nil {
+			return fmt.Errorf("event %d: %w", scheduled.Index, err)
+		}
+		return p.controller.SetZoneColors(event.Target, params.zones, params.durationMS)
+	case "set_matrix_colors":
+		params, err := matrixColorParams(event.Params)
+		if err != nil {
+			return fmt.Errorf("event %d: %w", scheduled.Index, err)
+		}
+		return p.controller.SetMatrixColors(event.Target, params.pixels, params.width, params.height, params.durationMS)
 	default:
 		return fmt.Errorf("event %d: unsupported action %q", scheduled.Index, event.Action)
 	}
@@ -159,6 +171,67 @@ func colorParams(raw json.RawMessage) (devices.ColorParams, error) {
 		Kelvin:     valueOr(params.Kelvin, 3500),
 		DurationMS: valueOr(params.DurationMS, 0),
 	}, nil
+}
+
+type zoneColorCommand struct {
+	zones      []devices.ZoneColorParams
+	durationMS int64
+}
+
+func zoneColorParams(raw json.RawMessage) (zoneColorCommand, error) {
+	var params timeline.SetZoneColorsParams
+	if err := decodeParams(raw, &params, "set_zone_colors"); err != nil {
+		return zoneColorCommand{}, err
+	}
+	zones := make([]devices.ZoneColorParams, 0, len(params.Zones))
+	for _, zone := range params.Zones {
+		zones = append(zones, devices.ZoneColorParams{
+			Index:      zone.Index,
+			Hue:        zone.Color.Hue,
+			Saturation: zone.Color.Saturation,
+			Brightness: zone.Color.Brightness,
+			Kelvin:     zone.Color.Kelvin,
+		})
+	}
+	return zoneColorCommand{zones: zones, durationMS: params.DurationMS}, nil
+}
+
+type matrixColorCommand struct {
+	pixels     []devices.MatrixColorParams
+	width      int
+	height     int
+	durationMS int64
+}
+
+func matrixColorParams(raw json.RawMessage) (matrixColorCommand, error) {
+	var params timeline.SetMatrixColorsParams
+	if err := decodeParams(raw, &params, "set_matrix_colors"); err != nil {
+		return matrixColorCommand{}, err
+	}
+	pixels := make([]devices.MatrixColorParams, 0, len(params.Pixels))
+	for _, pixel := range params.Pixels {
+		pixels = append(pixels, devices.MatrixColorParams{
+			X:          pixel.X,
+			Y:          pixel.Y,
+			Hue:        pixel.Color.Hue,
+			Saturation: pixel.Color.Saturation,
+			Brightness: pixel.Color.Brightness,
+			Kelvin:     pixel.Color.Kelvin,
+		})
+	}
+	return matrixColorCommand{pixels: pixels, width: params.Width, height: params.Height, durationMS: params.DurationMS}, nil
+}
+
+func decodeParams(raw json.RawMessage, value interface{}, action string) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(value); err != nil {
+		return fmt.Errorf("decode %s params: %w", action, err)
+	}
+	return nil
 }
 
 func valueOr[T any](value *T, fallback T) T {

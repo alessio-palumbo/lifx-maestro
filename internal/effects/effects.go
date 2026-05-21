@@ -1,11 +1,10 @@
 package effects
 
 import (
-	"math"
-
 	"lifx-maestro/internal/analysis"
 	"lifx-maestro/internal/devices"
 	"lifx-maestro/internal/palette"
+	"lifx-maestro/internal/rendering"
 	"lifx-maestro/internal/sections"
 	"lifx-maestro/internal/timeline"
 )
@@ -24,6 +23,8 @@ type MatrixRegion struct {
 
 type Target struct {
 	DeviceID     string
+	Index        int
+	Total        int
 	Zone         *int
 	ZoneRange    *ZoneRange
 	MatrixRegion *MatrixRegion
@@ -54,15 +55,15 @@ type Fade struct{}
 type Sweep struct{}
 
 func (Pulse) Generate(ctx Context) []timeline.Event {
-	return pulseEvents(ctx, []palette.Color{ctx.Palette.Primary()})
+	return pulseEvents(ctx, rendering.IntentPulse, []palette.Color{ctx.Palette.Primary()})
 }
 
 func (AlternatingPulse) Generate(ctx Context) []timeline.Event {
-	return pulseEvents(ctx, []palette.Color{ctx.Palette.Primary(), ctx.Palette.Secondary(), ctx.Palette.Accent()})
+	return pulseEvents(ctx, rendering.IntentPulse, []palette.Color{ctx.Palette.Primary(), ctx.Palette.Secondary(), ctx.Palette.Accent()})
 }
 
 func (Sweep) Generate(ctx Context) []timeline.Event {
-	return pulseEvents(ctx, []palette.Color{ctx.Palette.Secondary(), ctx.Palette.Accent(), ctx.Palette.Primary()})
+	return pulseEvents(ctx, rendering.IntentSweep, []palette.Color{ctx.Palette.Secondary(), ctx.Palette.Accent(), ctx.Palette.Primary()})
 }
 
 func (Breathing) Generate(ctx Context) []timeline.Event {
@@ -75,18 +76,17 @@ func (Breathing) Generate(ctx Context) []timeline.Event {
 		energy := energyAt(ctx.Energy, t, ctx.Section.Energy)
 		brightness := smoothBrightness(energy, ctx.MinBright, ctx.MaxBright) * 0.82
 		target := targetAt(ctx.Targets, int((t-ctx.Section.StartMS)/step))
-		events = append(events, colorEvent(t, target.DeviceID, ctx.Palette.Primary(), brightness, ctx.DurationMS*3))
+		events = append(events, render(t, target, rendering.IntentGradient, ctx.Palette.Primary(), brightness, ctx.DurationMS*3, 0, ctx)...)
 	}
 	return events
 }
 
 func (Fade) Generate(ctx Context) []timeline.Event {
-	return []timeline.Event{
-		colorEvent(ctx.Section.StartMS, targetAt(ctx.Targets, 0).DeviceID, ctx.Palette.Secondary(), smoothBrightness(ctx.Section.Energy, ctx.MinBright, ctx.MaxBright)*0.7, ctx.DurationMS*4),
-	}
+	target := targetAt(ctx.Targets, 0)
+	return render(ctx.Section.StartMS, target, rendering.IntentGradient, ctx.Palette.Secondary(), smoothBrightness(ctx.Section.Energy, ctx.MinBright, ctx.MaxBright)*0.7, ctx.DurationMS*4, 0, ctx)
 }
 
-func pulseEvents(ctx Context, colors []palette.Color) []timeline.Event {
+func pulseEvents(ctx Context, kind rendering.IntentKind, colors []palette.Color) []timeline.Event {
 	step := ctx.BeatStep
 	if step <= 0 {
 		step = 1
@@ -103,34 +103,49 @@ func pulseEvents(ctx Context, colors []palette.Color) []timeline.Event {
 			continue
 		}
 
-		target := targetAt(ctx.Targets, beatIndex+ctx.TargetShift)
-		color := colors[(beatIndex/step)%len(colors)]
 		energy := energyAt(ctx.Energy, beat, ctx.Section.Energy)
 		brightness := smoothBrightness(energy, ctx.MinBright, ctx.MaxBright)
-		events = append(events, colorEvent(avoidZero(beat), target.DeviceID, color, brightness, ctx.DurationMS))
+		for targetIndex := range targetsPerBeat(ctx.Targets) {
+			target := targetAt(ctx.Targets, beatIndex+ctx.TargetShift+targetIndex)
+			targetColor := colors[(beatIndex/step+targetIndex)%len(colors)]
+			events = append(events, render(beat, target, kind, targetColor, brightness, ctx.DurationMS, beatIndex+targetIndex, ctx)...)
+		}
 		beatIndex++
 	}
 	return events
 }
 
-func colorEvent(timeMS int64, target string, color palette.Color, brightness float64, durationMS int64) timeline.Event {
-	return timeline.Event{
-		TimeMS: timeMS,
-		Target: target,
-		Action: "set_color",
-		Params: timeline.MustParams(timeline.SetColorParams{
-			Hue:        ptr(math.Round(color.Hue*10) / 10),
-			Saturation: ptr(math.Round(color.Saturation*1000) / 1000),
-			Brightness: ptr(math.Round(clamp(brightness, 0, 1)*1000) / 1000),
-			Kelvin:     ptr(color.Kelvin),
-			DurationMS: ptr(durationMS),
-		}),
+func targetsPerBeat(targets []Target) []int {
+	if len(targets) == 0 {
+		return []int{0}
 	}
+	out := make([]int, len(targets))
+	for i := range out {
+		out[i] = i
+	}
+	return out
+}
+
+func render(timeMS int64, target Target, kind rendering.IntentKind, color palette.Color, brightness float64, durationMS int64, beatIndex int, ctx Context) []timeline.Event {
+	return rendering.Render(rendering.EffectIntent{
+		Kind:        kind,
+		TimeMS:      timeMS,
+		Target:      target.DeviceID,
+		Color:       color,
+		Palette:     ctx.Palette,
+		Brightness:  brightness,
+		DurationMS:  durationMS,
+		BeatIndex:   beatIndex,
+		Section:     string(ctx.Section.Type),
+		DeviceIndex: target.Index,
+		DeviceTotal: target.Total,
+		Supported:   rendering.SupportedDeviceKinds{SingleZone: true, MultiZone: true, Matrix: true},
+	}, devices.DeviceInfo{ID: target.DeviceID, Capabilities: target.Capabilities})
 }
 
 func targetAt(targets []Target, index int) Target {
 	if len(targets) == 0 {
-		return Target{DeviceID: "all", Capabilities: devices.DeviceCapabilities{Kind: devices.DeviceKindSingleZone, HasColor: true, HasKelvin: true}}
+		return Target{DeviceID: "all", Total: 1, Capabilities: devices.DeviceCapabilities{Kind: devices.DeviceKindSingleZone, HasColor: true, HasKelvin: true}}
 	}
 	return targets[index%len(targets)]
 }
@@ -155,13 +170,6 @@ func smoothBrightness(energy, minBright, maxBright float64) float64 {
 	return minBright + (maxBright-minBright)*smoothed
 }
 
-func avoidZero(timeMS int64) int64 {
-	if timeMS == 0 {
-		return 1
-	}
-	return timeMS
-}
-
 func clamp(value, min, max float64) float64 {
 	if value < min {
 		return min
@@ -170,8 +178,4 @@ func clamp(value, min, max float64) float64 {
 		return max
 	}
 	return value
-}
-
-func ptr[T any](value T) *T {
-	return &value
 }

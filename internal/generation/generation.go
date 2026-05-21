@@ -83,7 +83,11 @@ func sectionEvents(song analysis.SongAnalysis, section sections.Section, style s
 
 	switch section.Type {
 	case sections.TypeIntro:
-		return effects.Breathing{}.Generate(ctx)
+		events := effects.Breathing{}.Generate(ctx)
+		ctx.BeatStep = maxInt(4, style.PulseEvery)
+		ctx.DurationMS = maxInt64(90, ctx.DurationMS/3)
+		ctx.MaxBright *= 0.78
+		return append(events, effects.Pulse{}.Generate(ctx)...)
 	case sections.TypeBuild:
 		return effects.AlternatingPulse{}.Generate(ctx)
 	case sections.TypeDrop:
@@ -91,10 +95,17 @@ func sectionEvents(song analysis.SongAnalysis, section sections.Section, style s
 		ctx.DurationMS = maxInt64(45, ctx.DurationMS/2)
 		return effects.Sweep{}.Generate(ctx)
 	case sections.TypeBreakdown:
-		return effects.Fade{}.Generate(ctx)
+		events := effects.Breathing{}.Generate(ctx)
+		ctx.BeatStep = maxInt(2, style.PulseEvery)
+		ctx.DurationMS = maxInt64(120, ctx.DurationMS/4)
+		ctx.MaxBright *= 0.82
+		return append(events, effects.Pulse{}.Generate(ctx)...)
 	case sections.TypeOutro:
+		events := effects.Breathing{}.Generate(ctx)
 		ctx.MaxBright *= 0.65
-		return effects.Breathing{}.Generate(ctx)
+		ctx.BeatStep = maxInt(4, style.PulseEvery)
+		ctx.DurationMS = maxInt64(120, ctx.DurationMS/3)
+		return append(events, effects.Pulse{}.Generate(ctx)...)
 	default:
 		return effects.Pulse{}.Generate(ctx)
 	}
@@ -127,28 +138,57 @@ func applyConfig(style styles.Style, config Config) styles.Style {
 
 func targetsFor(target string, infos []devices.DeviceInfo) []effects.Target {
 	names := splitTargets(target)
-	if len(names) > 1 {
-		targets := make([]effects.Target, 0, len(names))
-		for _, name := range names {
-			targets = append(targets, effects.Target{DeviceID: name, Capabilities: defaultCapabilities()})
-		}
-		return targets
-	}
-
-	if target == "all" && len(infos) > 0 {
-		targets := make([]effects.Target, 0, len(infos))
-		for _, info := range infos {
-			if info.ID == "" {
-				continue
-			}
-			targets = append(targets, effects.Target{DeviceID: info.ID, Capabilities: info.Capabilities})
-		}
+	if len(infos) > 0 {
+		targets := targetsFromDeviceInfos(names, infos)
 		if len(targets) > 0 {
 			return targets
 		}
 	}
 
-	return []effects.Target{{DeviceID: target, Capabilities: defaultCapabilities()}}
+	if len(names) > 1 {
+		targets := make([]effects.Target, 0, len(names))
+		for _, name := range names {
+			targets = append(targets, effects.Target{DeviceID: name, Capabilities: defaultCapabilities()})
+		}
+		return assignTargetIndexes(targets)
+	}
+
+	return assignTargetIndexes([]effects.Target{{DeviceID: target, Capabilities: defaultCapabilities()}})
+}
+
+func targetsFromDeviceInfos(names []string, infos []devices.DeviceInfo) []effects.Target {
+	seen := make(map[string]bool)
+	var targets []effects.Target
+	add := func(info devices.DeviceInfo) {
+		if info.ID == "" || seen[info.ID] {
+			return
+		}
+		seen[info.ID] = true
+		targets = append(targets, effects.Target{DeviceID: info.ID, Capabilities: info.Capabilities})
+	}
+
+	for _, name := range names {
+		if name == "all" {
+			for _, info := range infos {
+				add(info)
+			}
+			continue
+		}
+		for _, info := range infos {
+			if matchesDeviceInfo(name, info) {
+				add(info)
+			}
+		}
+	}
+	return assignTargetIndexes(targets)
+}
+
+func matchesDeviceInfo(selector string, info devices.DeviceInfo) bool {
+	selector = strings.ToLower(strings.TrimSpace(selector))
+	return selector != "" && (strings.ToLower(info.ID) == selector ||
+		strings.ToLower(info.Label) == selector ||
+		strings.ToLower(info.Group) == selector ||
+		strings.ToLower(info.Location) == selector)
 }
 
 func splitTargets(target string) []string {
@@ -161,6 +201,14 @@ func splitTargets(target string) []string {
 		}
 	}
 	return out
+}
+
+func assignTargetIndexes(targets []effects.Target) []effects.Target {
+	for i := range targets {
+		targets[i].Index = i
+		targets[i].Total = len(targets)
+	}
+	return targets
 }
 
 func defaultCapabilities() devices.DeviceCapabilities {
@@ -237,6 +285,13 @@ func clamp(value, min, max float64) float64 {
 }
 
 func maxInt64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func maxInt(a, b int) int {
 	if a > b {
 		return a
 	}

@@ -42,6 +42,16 @@ func (m *MockDeviceController) SetColor(target string, params ColorParams) error
 	return nil
 }
 
+func (m *MockDeviceController) SetZoneColors(target string, zones []ZoneColorParams, durationMS int64) error {
+	m.print(target, fmt.Sprintf("set_zone_colors(zones=%d duration_ms=%d)", len(zones), durationMS))
+	return nil
+}
+
+func (m *MockDeviceController) SetMatrixColors(target string, pixels []MatrixColorParams, width, height int, durationMS int64) error {
+	m.print(target, fmt.Sprintf("set_matrix_colors(width=%d height=%d pixels=%d duration_ms=%d)", width, height, len(pixels), durationMS))
+	return nil
+}
+
 func (m *MockDeviceController) CaptureState(target string) error {
 	m.print(target, "capture_state")
 	return nil
@@ -55,12 +65,37 @@ func (m *MockDeviceController) RestoreState() error {
 func (m *MockDeviceController) Devices() ([]DeviceInfo, error) {
 	return []DeviceInfo{
 		{
-			ID:    "mock-all",
-			Label: "Mock All",
+			ID:    "mock-desk",
+			Label: "Desk Lamp",
 			Capabilities: DeviceCapabilities{
 				Kind:      DeviceKindSingleZone,
 				HasColor:  true,
 				HasKelvin: true,
+				ZoneCount: 1,
+			},
+		},
+		{
+			ID:    "mock-strip",
+			Label: "Light Strip",
+			Group: "tv",
+			Capabilities: DeviceCapabilities{
+				Kind:      DeviceKindMultiZone,
+				HasColor:  true,
+				HasKelvin: true,
+				ZoneCount: 16,
+			},
+		},
+		{
+			ID:    "mock-tile",
+			Label: "Tile",
+			Group: "wall",
+			Capabilities: DeviceCapabilities{
+				Kind:         DeviceKindMatrix,
+				HasColor:     true,
+				HasKelvin:    true,
+				ZoneCount:    64,
+				MatrixWidth:  8,
+				MatrixHeight: 8,
 			},
 		},
 	}, nil

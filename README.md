@@ -9,6 +9,8 @@ The current implementation can:
 - generate deterministic timeline JSON
 - play timelines against LIFX LAN devices
 - perform audio and lighting together from the same audio clock
+- discover device capabilities for single-zone, multizone, and matrix devices
+- render generated effects into whole-device, zone, or matrix timeline actions
 - run in dry-run mode without touching real lights
 - restore the initial light state when playback exits
 
@@ -71,6 +73,12 @@ Test the full perform flow without touching real lights:
 
 ```bash
 go run ./cmd/maestro perform samples/song.mp3 --dry-run --verbose
+```
+
+List discovered devices and capabilities:
+
+```bash
+go run ./cmd/maestro devices
 ```
 
 ## Commands
@@ -151,6 +159,26 @@ go run ./cmd/maestro perform samples/song.mp3 --style neon --devices tv,desk
 
 During `perform`, audio playback owns the master clock. The lighting scheduler follows the audio position rather than using an independent wall-clock timer.
 
+### `maestro devices`
+
+Discover LIFX devices and print their capabilities.
+
+```bash
+go run ./cmd/maestro devices
+```
+
+Options:
+
+- `--dry-run`: print mock single-zone, multizone, and matrix devices
+
+Example output:
+
+```text
+Desk Lamp          single_zone color
+Light Strip        multi_zone  16 zones
+Tile               matrix      8x8
+```
+
 ### `maestro play`
 
 Play an existing timeline JSON file.
@@ -198,11 +226,12 @@ The generator is section-aware. It uses rough song sections from the analyzer:
 - breakdown
 - outro
 
-Each section maps to reusable lighting primitives such as breathing, alternating pulse, fade, and sweep-style whole-device fallback behavior.
+Each section maps to reusable lighting primitives such as breathing, alternating pulse, fade, and sweep. Effects describe lighting intent first, then renderers translate that intent for each device kind.
 
 Styles influence:
 
 - palette
+- per-device color distribution
 - brightness scale
 - transition aggressiveness
 - pulse density
@@ -240,7 +269,7 @@ When using real LIFX devices, the controller discovers devices on the local netw
 - multizone
 - matrix
 
-Advanced spatial rendering is not implemented yet. Multizone and matrix devices currently fall back to whole-device behavior.
+The generator uses those capabilities when they are available. Single-zone devices receive varied whole-device colors, multizone devices can receive zone color arrays, and matrix devices can receive pixel color arrays. Unsupported combinations fall back to whole-device behavior.
 
 ## Restore on Exit
 
@@ -301,6 +330,59 @@ Supported actions currently:
 - `power_on`
 - `power_off`
 - `set_color`
+- `set_zone_colors`
+- `set_matrix_colors`
+
+Example multizone event:
+
+```json
+{
+  "time_ms": 2400,
+  "target": "strip",
+  "action": "set_zone_colors",
+  "params": {
+    "duration_ms": 120,
+    "zones": [
+      {
+        "index": 0,
+        "color": {
+          "hue": 235,
+          "saturation": 0.55,
+          "brightness": 0.7,
+          "kelvin": 3600
+        }
+      }
+    ]
+  }
+}
+```
+
+Example matrix event:
+
+```json
+{
+  "time_ms": 2400,
+  "target": "tile",
+  "action": "set_matrix_colors",
+  "params": {
+    "width": 8,
+    "height": 8,
+    "duration_ms": 120,
+    "pixels": [
+      {
+        "x": 0,
+        "y": 0,
+        "color": {
+          "hue": 285,
+          "saturation": 1.0,
+          "brightness": 0.7,
+          "kelvin": 3500
+        }
+      }
+    ]
+  }
+}
+```
 
 ## Development Checks
 
@@ -321,5 +403,5 @@ python3 -m py_compile python/analyze.py
 - Audio playback in `perform` currently supports MP3.
 - Audio analysis depends on Python packages from `python/requirements.txt`.
 - Section detection is heuristic and approximate.
-- Multizone and matrix devices use whole-device fallback behavior.
+- Multizone and matrix rendering is intentionally simple: gradients, sweeps, pulses, and full color arrays only.
 - No GUI, AI generation, waveform view, or timeline editor yet.

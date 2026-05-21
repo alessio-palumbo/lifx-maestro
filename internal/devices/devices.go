@@ -8,6 +8,23 @@ type ColorParams struct {
 	DurationMS int64
 }
 
+type ZoneColorParams struct {
+	Index      int
+	Hue        float64
+	Saturation float64
+	Brightness float64
+	Kelvin     int
+}
+
+type MatrixColorParams struct {
+	X          int
+	Y          int
+	Hue        float64
+	Saturation float64
+	Brightness float64
+	Kelvin     int
+}
+
 type DeviceKind string
 
 const (
@@ -37,6 +54,8 @@ type DeviceController interface {
 	PowerOn(target string) error
 	PowerOff(target string) error
 	SetColor(target string, params ColorParams) error
+	SetZoneColors(target string, zones []ZoneColorParams, durationMS int64) error
+	SetMatrixColors(target string, pixels []MatrixColorParams, width, height int, durationMS int64) error
 }
 
 type CapabilityProvider interface {

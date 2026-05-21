@@ -29,6 +29,36 @@ type SetColorParams struct {
 	DurationMS *int64   `json:"duration_ms,omitempty"`
 }
 
+type ColorValue struct {
+	Hue        float64 `json:"hue"`
+	Saturation float64 `json:"saturation"`
+	Brightness float64 `json:"brightness"`
+	Kelvin     int     `json:"kelvin"`
+}
+
+type ZoneColorParams struct {
+	Index int        `json:"index"`
+	Color ColorValue `json:"color"`
+}
+
+type SetZoneColorsParams struct {
+	DurationMS int64             `json:"duration_ms,omitempty"`
+	Zones      []ZoneColorParams `json:"zones"`
+}
+
+type MatrixColorParams struct {
+	X     int        `json:"x"`
+	Y     int        `json:"y"`
+	Color ColorValue `json:"color"`
+}
+
+type SetMatrixColorsParams struct {
+	Width      int                 `json:"width"`
+	Height     int                 `json:"height"`
+	DurationMS int64               `json:"duration_ms,omitempty"`
+	Pixels     []MatrixColorParams `json:"pixels"`
+}
+
 func Load(path string) (*Timeline, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

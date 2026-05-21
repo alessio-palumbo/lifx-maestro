@@ -9,6 +9,7 @@ import (
 	lifxdevice "github.com/alessio-palumbo/lifxlan-go/pkg/device"
 	"github.com/alessio-palumbo/lifxlan-go/pkg/messages"
 	"github.com/alessio-palumbo/lifxlan-go/pkg/protocol"
+	"github.com/alessio-palumbo/lifxprotocol-go/gen/protocol/packets"
 )
 
 const discoverySettlingDelay = time.Second
@@ -67,6 +68,61 @@ func (l *LifxDeviceController) SetColor(target string, params ColorParams) error
 		duration,
 		0,
 	))
+}
+
+func (l *LifxDeviceController) SetZoneColors(target string, zones []ZoneColorParams, durationMS int64) error {
+	if len(zones) == 0 {
+		return nil
+	}
+	colors := make([]packets.LightHsbk, len(zones))
+	for _, zone := range zones {
+		if zone.Index < 0 || zone.Index >= len(colors) {
+			continue
+		}
+		colors[zone.Index] = hsbk(zone.Hue, zone.Saturation, zone.Brightness, zone.Kelvin)
+	}
+
+	serials, err := l.resolveTarget(target)
+	if err != nil {
+		return err
+	}
+	for _, serial := range serials {
+		for _, msg := range messages.SetMultizoneExtendedColors(0, colors, time.Duration(durationMS)*time.Millisecond) {
+			if err := l.controller.Send(serial, msg); err != nil {
+				return fmt.Errorf("send zone colors to %s: %w", serial, err)
+			}
+		}
+	}
+	return nil
+}
+
+func (l *LifxDeviceController) SetMatrixColors(target string, pixels []MatrixColorParams, width, height int, durationMS int64) error {
+	if len(pixels) == 0 {
+		return nil
+	}
+	if width <= 0 || height <= 0 {
+		return fmt.Errorf("matrix width and height are required")
+	}
+	colors := make([]packets.LightHsbk, width*height)
+	for _, pixel := range pixels {
+		if pixel.X < 0 || pixel.X >= width || pixel.Y < 0 || pixel.Y >= height {
+			continue
+		}
+		colors[pixel.Y*width+pixel.X] = hsbk(pixel.Hue, pixel.Saturation, pixel.Brightness, pixel.Kelvin)
+	}
+
+	serials, err := l.resolveTarget(target)
+	if err != nil {
+		return err
+	}
+	for _, serial := range serials {
+		for _, msg := range messages.SetMatrixColorsFromSlice(0, 1, width, colors, time.Duration(durationMS)*time.Millisecond) {
+			if err := l.controller.Send(serial, msg); err != nil {
+				return fmt.Errorf("send matrix colors to %s: %w", serial, err)
+			}
+		}
+	}
+	return nil
 }
 
 func (l *LifxDeviceController) CaptureState(target string) error {
@@ -268,6 +324,18 @@ func clamp(value, min, max float64) float64 {
 		return max
 	}
 	return value
+}
+
+func hsbk(hue, saturation, brightness float64, kelvin int) packets.LightHsbk {
+	if kelvin <= 0 {
+		kelvin = 3500
+	}
+	return packets.LightHsbk{
+		Hue:        lifxdevice.ConvertExternalToDeviceValue(clamp(hue, 0, 360), 360),
+		Saturation: lifxdevice.ConvertExternalToDeviceValue(normalizePercent(saturation), 100),
+		Brightness: lifxdevice.ConvertExternalToDeviceValue(normalizePercent(brightness), 100),
+		Kelvin:     uint16(kelvin),
+	}
 }
 
 func deviceKind(device lifxdevice.Device) DeviceKind {

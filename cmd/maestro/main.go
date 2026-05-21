@@ -31,10 +31,43 @@ func newCommand() *cli.Command {
 		Usage: "generate and play synchronized smart-light choreographies",
 		Commands: []*cli.Command{
 			analyzeCommand(),
+			devicesCommand(),
 			generateCommand(),
 			performCommand(),
 			playCommand(),
 			stylesCommand(),
+		},
+	}
+}
+
+func devicesCommand() *cli.Command {
+	return &cli.Command{
+		Name:  "devices",
+		Usage: "discover LIFX devices and print capabilities",
+		Flags: []cli.Flag{
+			&cli.BoolFlag{Name: "dry-run", Usage: "print mock device capabilities"},
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			var provider devices.CapabilityProvider
+			if cmd.Bool("dry-run") {
+				provider = devices.NewMockDeviceController(os.Stdout)
+			} else {
+				lifxController, err := devices.NewLifxDeviceController()
+				if err != nil {
+					return err
+				}
+				defer closeController(lifxController)
+				provider = lifxController
+			}
+
+			infos, err := provider.Devices()
+			if err != nil {
+				return err
+			}
+			for _, info := range infos {
+				fmt.Fprintf(os.Stdout, "%-18s %-11s %s\n", displayName(info), info.Capabilities.Kind, capabilitySummary(info.Capabilities))
+			}
+			return nil
 		},
 	}
 }
@@ -277,5 +310,29 @@ func setupStateRestore(controller devices.DeviceController, target string) func(
 func closeController(controller interface{ Close() error }) {
 	if err := controller.Close(); err != nil {
 		fmt.Fprintf(os.Stderr, "maestro: close controller: %v\n", err)
+	}
+}
+
+func displayName(info devices.DeviceInfo) string {
+	if info.Label != "" {
+		return info.Label
+	}
+	if info.ID != "" {
+		return info.ID
+	}
+	return "unknown"
+}
+
+func capabilitySummary(capabilities devices.DeviceCapabilities) string {
+	switch capabilities.Kind {
+	case devices.DeviceKindMultiZone:
+		return fmt.Sprintf("%d zones", capabilities.ZoneCount)
+	case devices.DeviceKindMatrix:
+		return fmt.Sprintf("%dx%d", capabilities.MatrixWidth, capabilities.MatrixHeight)
+	default:
+		if capabilities.HasColor {
+			return "color"
+		}
+		return "white"
 	}
 }

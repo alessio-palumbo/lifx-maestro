@@ -9,7 +9,7 @@ import (
 
 type Style struct {
 	Name                     string
-	Palette                  palette.Fixed
+	Palette                  palette.Palette
 	BrightnessScale          float64
 	TransitionAggressiveness float64
 	PulseEvery               int
