@@ -116,7 +116,8 @@ func (l *LifxDeviceController) SetMatrixColors(target string, pixels []MatrixCol
 		return err
 	}
 	for _, serial := range serials {
-		for _, msg := range messages.SetMatrixColorsFromSlice(0, 1, width, colors, time.Duration(durationMS)*time.Millisecond) {
+		length := l.matrixChainLength(serial)
+		for _, msg := range messages.SetMatrixColorsFromSlice(0, length, width, colors, time.Duration(durationMS)*time.Millisecond) {
 			if err := l.controller.Send(serial, msg); err != nil {
 				return fmt.Errorf("send matrix colors to %s: %w", serial, err)
 			}
@@ -211,6 +212,7 @@ func (l *LifxDeviceController) Devices() ([]DeviceInfo, error) {
 				ZoneCount:    zoneCount(device),
 				MatrixWidth:  device.MatrixProperties.Width,
 				MatrixHeight: device.MatrixProperties.Height,
+				MatrixLength: matrixChainLength(device),
 			},
 		})
 	}
@@ -266,6 +268,18 @@ func (l *LifxDeviceController) resolveTarget(target string) ([]lifxdevice.Serial
 	}
 
 	return serials, nil
+}
+
+func (l *LifxDeviceController) matrixChainLength(serial lifxdevice.Serial) int {
+	if l.controller == nil {
+		return 1
+	}
+	for _, device := range l.controller.GetDevices() {
+		if device.Serial == serial {
+			return matrixChainLength(device)
+		}
+	}
+	return 1
 }
 
 func splitSelectors(target string) []string {
@@ -361,4 +375,11 @@ func zoneCount(device lifxdevice.Device) int {
 	default:
 		return 1
 	}
+}
+
+func matrixChainLength(device lifxdevice.Device) int {
+	if device.MatrixProperties.ChainLength > 0 {
+		return device.MatrixProperties.ChainLength
+	}
+	return 1
 }

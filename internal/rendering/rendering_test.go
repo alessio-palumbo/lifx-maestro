@@ -57,6 +57,7 @@ func TestRenderMatrixCreatesMatrixColors(t *testing.T) {
 			Kind:         devices.DeviceKindMatrix,
 			MatrixWidth:  3,
 			MatrixHeight: 2,
+			MatrixLength: 2,
 		},
 	})
 

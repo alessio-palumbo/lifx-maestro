@@ -96,6 +96,7 @@ func (m *MockDeviceController) Devices() ([]DeviceInfo, error) {
 				ZoneCount:    64,
 				MatrixWidth:  8,
 				MatrixHeight: 8,
+				MatrixLength: 2,
 			},
 		},
 	}, nil

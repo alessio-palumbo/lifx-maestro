@@ -352,6 +352,9 @@ func capabilitySummary(capabilities devices.DeviceCapabilities) string {
 	case devices.DeviceKindMultiZone:
 		return fmt.Sprintf("%d zones", capabilities.ZoneCount)
 	case devices.DeviceKindMatrix:
+		if capabilities.MatrixLength > 1 {
+			return fmt.Sprintf("%dx%d x%d", capabilities.MatrixWidth, capabilities.MatrixHeight, capabilities.MatrixLength)
+		}
 		return fmt.Sprintf("%dx%d", capabilities.MatrixWidth, capabilities.MatrixHeight)
 	default:
 		if capabilities.HasColor {

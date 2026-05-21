@@ -65,3 +65,18 @@ func TestResolveSelectorMatchesLabelGroupLocationAndSerial(t *testing.T) {
 		t.Fatalf("serial selector = %#v, want %s", got, tvSerial)
 	}
 }
+
+func TestMatrixChainLengthDefaultsToOne(t *testing.T) {
+	if got := matrixChainLength(lifxdevice.Device{}); got != 1 {
+		t.Fatalf("matrixChainLength = %d, want 1", got)
+	}
+}
+
+func TestMatrixChainLengthUsesDiscoveredChainLength(t *testing.T) {
+	device := lifxdevice.Device{}
+	device.MatrixProperties.ChainLength = 3
+
+	if got := matrixChainLength(device); got != 3 {
+		t.Fatalf("matrixChainLength = %d, want 3", got)
+	}
+}

@@ -40,6 +40,7 @@ type DeviceCapabilities struct {
 	ZoneCount    int
 	MatrixWidth  int
 	MatrixHeight int
+	MatrixLength int
 }
 
 type DeviceInfo struct {

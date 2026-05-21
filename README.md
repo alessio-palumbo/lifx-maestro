@@ -181,7 +181,7 @@ Example output:
 ```text
 Desk Lamp          single_zone color
 Light Strip        multi_zone  16 zones
-Tile               matrix      8x8
+Tile               matrix      8x8 x2
 ```
 
 ### `maestro play`
@@ -274,7 +274,7 @@ When using real LIFX devices, the controller discovers devices on the local netw
 - multizone
 - matrix
 
-The generator uses those capabilities when they are available. Single-zone devices receive varied whole-device colors, multizone devices can receive zone color arrays, and matrix devices can receive pixel color arrays. Unsupported combinations fall back to whole-device behavior.
+The generator uses those capabilities when they are available. Single-zone devices receive varied whole-device colors, multizone devices can receive zone color arrays, and matrix devices can receive pixel color arrays. Matrix chains currently replicate the same rendered frame across every tile in the chain. Unsupported combinations fall back to whole-device behavior.
 
 ## Restore on Exit
 
