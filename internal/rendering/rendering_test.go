@@ -78,6 +78,37 @@ func TestRenderMatrixCreatesMatrixColors(t *testing.T) {
 	}
 }
 
+func TestRenderMatrixPulseUsesRadialAccentFrame(t *testing.T) {
+	intent := testIntent(IntentPulse)
+	events := Render(intent, devices.DeviceInfo{
+		ID: "tile",
+		Capabilities: devices.DeviceCapabilities{
+			Kind:         devices.DeviceKindMatrix,
+			MatrixWidth:  3,
+			MatrixHeight: 3,
+		},
+	})
+
+	var params timeline.SetMatrixColorsParams
+	if err := json.Unmarshal(events[0].Params, &params); err != nil {
+		t.Fatal(err)
+	}
+	var accentPixel *timeline.MatrixColorParams
+	for i := range params.Pixels {
+		if params.Pixels[i].X == 0 && params.Pixels[i].Y == 0 {
+			accentPixel = &params.Pixels[i]
+			break
+		}
+	}
+	if accentPixel == nil {
+		t.Fatal("accent pixel not found")
+	}
+	wantHue := intent.Palette.AccentForBeat(intent.BeatIndex).Hue
+	if accentPixel.Color.Hue != wantHue {
+		t.Fatalf("accent pixel hue = %.1f, want accent hue %.1f", accentPixel.Color.Hue, wantHue)
+	}
+}
+
 func TestRenderMultiZoneUsesSurfaceZones(t *testing.T) {
 	events := Render(testIntent(IntentGradient), devices.DeviceInfo{
 		ID: "strip",

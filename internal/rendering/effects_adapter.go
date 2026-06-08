@@ -86,6 +86,39 @@ func sweepFrame(intent EffectIntent, surface lifxdevice.Surface, width, height i
 	}
 }
 
+func matrixPulseFrame(intent EffectIntent, surface lifxdevice.Surface, width, height int) lifxeffects.Frame {
+	caps := effectCapabilities(surface, width, height)
+	if caps.Width <= 0 {
+		caps.Width = width
+	}
+	if caps.Height <= 0 {
+		caps.Height = height
+	}
+
+	background := effectColor(intent.Palette.BackgroundForSection(intent.Section), intent.Brightness)
+	accent := effectColor(intent.Palette.AccentForBeat(intent.BeatIndex), intent.Brightness)
+	colors := make([]lifxeffects.Color, 0, caps.Width*caps.Height)
+	cx := float64(caps.Width-1) / 2
+	cy := float64(caps.Height-1) / 2
+	for y := 0; y < caps.Height; y++ {
+		for x := 0; x < caps.Width; x++ {
+			dist := math.Hypot(float64(x)-cx, float64(y)-cy)
+			if int(dist+float64(intent.BeatIndex))%3 == 0 {
+				colors = append(colors, accent)
+				continue
+			}
+			colors = append(colors, background)
+		}
+	}
+
+	return lifxeffects.Frame{
+		Colors:   colors,
+		Width:    caps.Width,
+		Height:   caps.Height,
+		Duration: time.Duration(intent.DurationMS) * time.Millisecond,
+	}
+}
+
 func frameFromPaletteColors(colors []palette.Color, width, height int, brightness float64, durationMS int64) lifxeffects.Frame {
 	frameColors := make([]lifxeffects.Color, len(colors))
 	for i, color := range colors {
@@ -134,11 +167,8 @@ func surfaceForMatrix(device devices.DeviceInfo, width, height int) lifxdevice.S
 	if surface.Zones <= 0 {
 		surface.Zones = width * height
 	}
-	if surface.Matrix == nil {
-		surface.Matrix = &lifxdevice.MatrixSurface{Chains: []lifxdevice.MatrixChain{{
-			Bounds:    lifxdevice.Rect{Width: width, Height: height},
-			SendWidth: width,
-		}}}
+	if surface.Matrix != nil && len(surface.Matrix.Chains) == 0 {
+		surface.Matrix = nil
 	}
 	return surface
 }

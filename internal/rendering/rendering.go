@@ -121,6 +121,14 @@ func (MatrixRenderer) Render(intent EffectIntent, device devices.DeviceInfo) []t
 	}
 	width, height := matrixDimensions(device)
 
+	if intent.Kind == IntentPulse {
+		frame := matrixPulseFrame(intent, surfaceForMatrix(device, width, height), width, height)
+		deviceFrames := adaptFrame(frame, surfaceForMatrix(device, width, height))
+		if len(deviceFrames) > 0 && len(deviceFrames[0].Colors) > 0 {
+			return []timeline.Event{matrixColorsEvent(intent, device.ID, deviceFrames[0])}
+		}
+	}
+
 	colors := make([]palette.Color, 0, width*height)
 	for y := 0; y < height; y++ {
 		for x := 0; x < width; x++ {
