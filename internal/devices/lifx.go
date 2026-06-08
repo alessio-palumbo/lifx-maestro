@@ -200,20 +200,13 @@ func (l *LifxDeviceController) Devices() ([]DeviceInfo, error) {
 	discovered := l.controller.GetDevices()
 	infos := make([]DeviceInfo, 0, len(discovered))
 	for _, device := range discovered {
+		capabilities := deviceCapabilities(device)
 		infos = append(infos, DeviceInfo{
-			ID:       device.Serial.String(),
-			Label:    device.Label,
-			Group:    device.Group,
-			Location: device.Location,
-			Capabilities: DeviceCapabilities{
-				Kind:         deviceKind(device),
-				HasColor:     device.ColorProperties.HasColor,
-				HasKelvin:    device.ColorProperties.TemperatureRange.Min > 0 || device.ColorProperties.TemperatureRange.Max > 0,
-				ZoneCount:    zoneCount(device),
-				MatrixWidth:  device.MatrixProperties.Width,
-				MatrixHeight: device.MatrixProperties.Height,
-				MatrixLength: matrixChainLength(device),
-			},
+			ID:           device.Serial.String(),
+			Label:        device.Label,
+			Group:        device.Group,
+			Location:     device.Location,
+			Capabilities: capabilities,
 		})
 	}
 	return infos, nil
@@ -352,11 +345,27 @@ func hsbk(hue, saturation, brightness float64, kelvin int) packets.LightHsbk {
 	}
 }
 
-func deviceKind(device lifxdevice.Device) DeviceKind {
-	switch device.LightType.String() {
-	case "multi_zone":
+func deviceCapabilities(device lifxdevice.Device) DeviceCapabilities {
+	surface := lifxdevice.SurfaceFromDevice(device)
+	kind := deviceKindFromLightType(device.LightType)
+
+	return DeviceCapabilities{
+		Kind:         kind,
+		HasColor:     device.ColorProperties.HasColor,
+		HasKelvin:    device.ColorProperties.TemperatureRange.Min > 0 || device.ColorProperties.TemperatureRange.Max > 0,
+		ZoneCount:    zoneCountFromDevice(kind, device, surface),
+		MatrixWidth:  matrixWidthFromDevice(kind, device, surface),
+		MatrixHeight: matrixHeightFromDevice(kind, device, surface),
+		MatrixLength: matrixLengthFromSurface(surface, device.MatrixProperties.ChainLength),
+		Surface:      surface,
+	}
+}
+
+func deviceKindFromLightType(lightType lifxdevice.LightType) DeviceKind {
+	switch lightType {
+	case lifxdevice.LightTypeMultiZone:
 		return DeviceKindMultiZone
-	case "matrix":
+	case lifxdevice.LightTypeMatrix:
 		return DeviceKindMatrix
 	default:
 		return DeviceKindSingleZone
@@ -364,22 +373,71 @@ func deviceKind(device lifxdevice.Device) DeviceKind {
 }
 
 func zoneCount(device lifxdevice.Device) int {
-	switch deviceKind(device) {
+	return zoneCountFromDevice(
+		deviceKindFromLightType(device.LightType),
+		device,
+		lifxdevice.SurfaceFromDevice(device),
+	)
+}
+
+func zoneCountFromDevice(kind DeviceKind, device lifxdevice.Device, surface lifxdevice.Surface) int {
+	switch kind {
 	case DeviceKindMultiZone:
-		return len(device.MultizoneProperties.Zones)
+		if count := len(device.MultizoneProperties.Zones); count > 0 {
+			return count
+		}
+		if surface.Zones > 0 {
+			return surface.Zones
+		}
 	case DeviceKindMatrix:
 		if device.MatrixProperties.NZones > 0 {
 			return device.MatrixProperties.NZones
 		}
-		return device.MatrixProperties.Width * device.MatrixProperties.Height
+		if device.MatrixProperties.Width > 0 && device.MatrixProperties.Height > 0 {
+			return device.MatrixProperties.Width * device.MatrixProperties.Height
+		}
+		if surface.Zones > 0 {
+			return surface.Zones
+		}
+		if surface.Width > 0 && surface.Height > 0 {
+			return surface.Width * surface.Height
+		}
 	default:
 		return 1
 	}
+	return 1
+}
+
+func matrixWidthFromDevice(kind DeviceKind, device lifxdevice.Device, surface lifxdevice.Surface) int {
+	if kind == DeviceKindMatrix && device.MatrixProperties.Width > 0 {
+		return device.MatrixProperties.Width
+	}
+	if kind == DeviceKindMatrix && surface.Width > 0 {
+		return surface.Width
+	}
+	return 0
+}
+
+func matrixHeightFromDevice(kind DeviceKind, device lifxdevice.Device, surface lifxdevice.Surface) int {
+	if kind == DeviceKindMatrix && device.MatrixProperties.Height > 0 {
+		return device.MatrixProperties.Height
+	}
+	if kind == DeviceKindMatrix && surface.Height > 0 {
+		return surface.Height
+	}
+	return 0
 }
 
 func matrixChainLength(device lifxdevice.Device) int {
-	if device.MatrixProperties.ChainLength > 0 {
-		return device.MatrixProperties.ChainLength
+	return matrixLengthFromSurface(lifxdevice.SurfaceFromDevice(device), device.MatrixProperties.ChainLength)
+}
+
+func matrixLengthFromSurface(surface lifxdevice.Surface, fallback int) int {
+	if surface.Matrix != nil && len(surface.Matrix.Chains) > 0 {
+		return len(surface.Matrix.Chains)
+	}
+	if fallback > 0 {
+		return fallback
 	}
 	return 1
 }

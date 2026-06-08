@@ -5,6 +5,8 @@ import (
 	"io"
 	"sync"
 	"time"
+
+	lifxdevice "github.com/alessio-palumbo/lifxlan-go/pkg/device"
 )
 
 type MockDeviceController struct {
@@ -72,6 +74,9 @@ func (m *MockDeviceController) Devices() ([]DeviceInfo, error) {
 				HasColor:  true,
 				HasKelvin: true,
 				ZoneCount: 1,
+				Surface: lifxdevice.Surface{
+					Zones: 1,
+				},
 			},
 		},
 		{
@@ -83,6 +88,9 @@ func (m *MockDeviceController) Devices() ([]DeviceInfo, error) {
 				HasColor:  true,
 				HasKelvin: true,
 				ZoneCount: 16,
+				Surface: lifxdevice.Surface{
+					Zones: 16,
+				},
 			},
 		},
 		{
@@ -97,6 +105,23 @@ func (m *MockDeviceController) Devices() ([]DeviceInfo, error) {
 				MatrixWidth:  8,
 				MatrixHeight: 8,
 				MatrixLength: 2,
+				Surface: lifxdevice.Surface{
+					Width:  16,
+					Height: 8,
+					Zones:  128,
+					Matrix: &lifxdevice.MatrixSurface{Chains: []lifxdevice.MatrixChain{
+						{
+							Index:     0,
+							Bounds:    lifxdevice.Rect{Width: 8, Height: 8},
+							SendWidth: 8,
+						},
+						{
+							Index:     1,
+							Bounds:    lifxdevice.Rect{X: 8, Width: 8, Height: 8},
+							SendWidth: 8,
+						},
+					}},
+				},
 			},
 		},
 	}, nil

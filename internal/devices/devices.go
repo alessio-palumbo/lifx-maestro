@@ -1,5 +1,7 @@
 package devices
 
+import lifxdevice "github.com/alessio-palumbo/lifxlan-go/pkg/device"
+
 type ColorParams struct {
 	Hue        float64
 	Saturation float64
@@ -41,6 +43,7 @@ type DeviceCapabilities struct {
 	MatrixWidth  int
 	MatrixHeight int
 	MatrixLength int
+	Surface      lifxdevice.Surface
 }
 
 type DeviceInfo struct {
