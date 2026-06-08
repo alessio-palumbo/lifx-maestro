@@ -2,7 +2,10 @@ package rendering
 
 import (
 	"math"
+	"time"
 
+	lifxdevice "github.com/alessio-palumbo/lifxlan-go/pkg/device"
+	lifxeffects "github.com/alessio-palumbo/lifxlan-go/pkg/effects"
 	"lifx-maestro/internal/devices"
 	"lifx-maestro/internal/palette"
 	"lifx-maestro/internal/timeline"
@@ -88,10 +91,13 @@ func (MultiZoneRenderer) Render(intent EffectIntent, device devices.DeviceInfo) 
 		colors = gradientStops(intent, count)
 	}
 
-	zones := make([]timeline.ZoneColorParams, count)
-	for i := range count {
-		zones[i] = timeline.ZoneColorParams{Index: i, Color: colorValue(colors[i], intent.Brightness)}
+	frame := frameFromPaletteColors(colors, count, 1, intent.Brightness, intent.DurationMS)
+	deviceFrames := adaptFrame(frame, surfaceForMultiZone(device, count))
+	if len(deviceFrames) > 0 && len(deviceFrames[0].Colors) > 0 {
+		return []timeline.Event{zoneColorsEvent(intent, device.ID, deviceFrames[0])}
 	}
+
+	zones := zoneColorParams(colors, intent.Brightness)
 	return []timeline.Event{{
 		TimeMS: avoidZero(intent.TimeMS),
 		Target: device.ID,
@@ -113,13 +119,20 @@ func (MatrixRenderer) Render(intent EffectIntent, device devices.DeviceInfo) []t
 		height = 8
 	}
 
-	pixels := make([]timeline.MatrixColorParams, 0, width*height)
+	colors := make([]palette.Color, 0, width*height)
 	for y := 0; y < height; y++ {
 		for x := 0; x < width; x++ {
-			color := matrixColor(intent, x, y, width, height)
-			pixels = append(pixels, timeline.MatrixColorParams{X: x, Y: y, Color: colorValue(color, intent.Brightness)})
+			colors = append(colors, matrixColor(intent, x, y, width, height))
 		}
 	}
+
+	frame := frameFromPaletteColors(colors, width, height, intent.Brightness, intent.DurationMS)
+	deviceFrames := adaptFrame(frame, surfaceForMatrix(device, width, height))
+	if len(deviceFrames) > 0 && len(deviceFrames[0].Colors) > 0 {
+		return []timeline.Event{matrixColorsEvent(intent, device.ID, deviceFrames[0])}
+	}
+
+	pixels := matrixColorParams(colors, width, height, intent.Brightness)
 	return []timeline.Event{{
 		TimeMS: avoidZero(intent.TimeMS),
 		Target: device.ID,
@@ -143,6 +156,91 @@ func setColor(timeMS int64, target string, color palette.Color, brightness float
 			DurationMS: ptr(durationMS),
 		}),
 	}
+}
+
+func zoneColorsEvent(intent EffectIntent, target string, frame lifxeffects.DeviceFrame) timeline.Event {
+	return timeline.Event{
+		TimeMS: avoidZero(intent.TimeMS),
+		Target: target,
+		Action: "set_zone_colors",
+		Params: timeline.MustParams(timeline.SetZoneColorsParams{
+			DurationMS: durationMS(frame, intent.DurationMS),
+			Zones:      zoneColorParamsFromEffects(frame.Colors),
+		}),
+	}
+}
+
+func matrixColorsEvent(intent EffectIntent, target string, frame lifxeffects.DeviceFrame) timeline.Event {
+	width := frame.SendWidth
+	height := frame.Height
+	if width <= 0 {
+		width = 1
+	}
+	if height <= 0 {
+		height = len(frame.Colors) / width
+	}
+	return timeline.Event{
+		TimeMS: avoidZero(intent.TimeMS),
+		Target: target,
+		Action: "set_matrix_colors",
+		Params: timeline.MustParams(timeline.SetMatrixColorsParams{
+			Width:      width,
+			Height:     height,
+			DurationMS: durationMS(frame, intent.DurationMS),
+			Pixels:     matrixColorParamsFromEffects(frame.Colors, width, height),
+		}),
+	}
+}
+
+func frameFromPaletteColors(colors []palette.Color, width, height int, brightness float64, durationMS int64) lifxeffects.Frame {
+	frameColors := make([]lifxeffects.Color, len(colors))
+	for i, color := range colors {
+		frameColors[i] = effectColor(color, brightness)
+	}
+	return lifxeffects.Frame{
+		Colors:   frameColors,
+		Width:    width,
+		Height:   height,
+		Duration: time.Duration(durationMS) * time.Millisecond,
+	}
+}
+
+func adaptFrame(frame lifxeffects.Frame, surface lifxdevice.Surface) []lifxeffects.DeviceFrame {
+	frames, err := lifxeffects.AdaptFrameToSurface(frame, surface, lifxeffects.AdaptOptions{})
+	if err != nil {
+		return nil
+	}
+	return frames
+}
+
+func surfaceForMultiZone(device devices.DeviceInfo, count int) lifxdevice.Surface {
+	surface := device.Capabilities.Surface
+	surface.LightType = lifxdevice.LightTypeMultiZone
+	if surface.Zones <= 0 {
+		surface.Zones = count
+	}
+	return surface
+}
+
+func surfaceForMatrix(device devices.DeviceInfo, width, height int) lifxdevice.Surface {
+	surface := device.Capabilities.Surface
+	surface.LightType = lifxdevice.LightTypeMatrix
+	if surface.Width <= 0 {
+		surface.Width = width
+	}
+	if surface.Height <= 0 {
+		surface.Height = height
+	}
+	if surface.Zones <= 0 {
+		surface.Zones = width * height
+	}
+	if surface.Matrix == nil {
+		surface.Matrix = &lifxdevice.MatrixSurface{Chains: []lifxdevice.MatrixChain{{
+			Bounds:    lifxdevice.Rect{Width: width, Height: height},
+			SendWidth: width,
+		}}}
+	}
+	return surface
 }
 
 func gradientStops(intent EffectIntent, count int) []palette.Color {
@@ -192,6 +290,75 @@ func colorValue(color palette.Color, brightness float64) timeline.ColorValue {
 		Brightness: math.Round(clamp(brightness, 0, 1)*1000) / 1000,
 		Kelvin:     color.Kelvin,
 	}
+}
+
+func effectColor(color palette.Color, brightness float64) lifxeffects.Color {
+	return lifxeffects.Color{
+		Hue:        math.Round(color.Hue*10) / 10,
+		Saturation: math.Round(clamp(color.Saturation, 0, 1)*1000) / 10,
+		Brightness: math.Round(clamp(brightness, 0, 1)*1000) / 10,
+		Kelvin:     uint16(color.Kelvin),
+	}
+}
+
+func timelineColor(color lifxeffects.Color) timeline.ColorValue {
+	return timeline.ColorValue{
+		Hue:        math.Round(color.Hue*10) / 10,
+		Saturation: math.Round(clamp(color.Saturation, 0, 100)*10) / 1000,
+		Brightness: math.Round(clamp(color.Brightness, 0, 100)*10) / 1000,
+		Kelvin:     int(color.Kelvin),
+	}
+}
+
+func zoneColorParams(colors []palette.Color, brightness float64) []timeline.ZoneColorParams {
+	zones := make([]timeline.ZoneColorParams, len(colors))
+	for i, color := range colors {
+		zones[i] = timeline.ZoneColorParams{Index: i, Color: colorValue(color, brightness)}
+	}
+	return zones
+}
+
+func zoneColorParamsFromEffects(colors []lifxeffects.Color) []timeline.ZoneColorParams {
+	zones := make([]timeline.ZoneColorParams, len(colors))
+	for i, color := range colors {
+		zones[i] = timeline.ZoneColorParams{Index: i, Color: timelineColor(color)}
+	}
+	return zones
+}
+
+func matrixColorParams(colors []palette.Color, width, height int, brightness float64) []timeline.MatrixColorParams {
+	pixels := make([]timeline.MatrixColorParams, 0, width*height)
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			i := y*width + x
+			if i >= len(colors) {
+				continue
+			}
+			pixels = append(pixels, timeline.MatrixColorParams{X: x, Y: y, Color: colorValue(colors[i], brightness)})
+		}
+	}
+	return pixels
+}
+
+func matrixColorParamsFromEffects(colors []lifxeffects.Color, width, height int) []timeline.MatrixColorParams {
+	pixels := make([]timeline.MatrixColorParams, 0, width*height)
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			i := y*width + x
+			if i >= len(colors) {
+				continue
+			}
+			pixels = append(pixels, timeline.MatrixColorParams{X: x, Y: y, Color: timelineColor(colors[i])})
+		}
+	}
+	return pixels
+}
+
+func durationMS(frame lifxeffects.DeviceFrame, fallback int64) int64 {
+	if frame.Duration > 0 {
+		return frame.Duration.Milliseconds()
+	}
+	return fallback
 }
 
 func avoidZero(timeMS int64) int64 {
