@@ -194,6 +194,34 @@ func TestRenderMatrixUsesAdaptedSurfaceSendDimensions(t *testing.T) {
 	}
 }
 
+func TestRenderMatrixGradientUsesEffectGradientFrame(t *testing.T) {
+	events := Render(testIntent(IntentGradient), devices.DeviceInfo{
+		ID: "tile",
+		Capabilities: devices.DeviceCapabilities{
+			Kind: devices.DeviceKindMatrix,
+			Surface: lifxdevice.Surface{
+				LightType: lifxdevice.LightTypeMatrix,
+				Width:     4,
+				Height:    2,
+				Zones:     8,
+			},
+		},
+	})
+
+	var params timeline.SetMatrixColorsParams
+	if err := json.Unmarshal(events[0].Params, &params); err != nil {
+		t.Fatal(err)
+	}
+	if params.Width != 4 || params.Height != 2 || len(params.Pixels) != 8 {
+		t.Fatalf("matrix params = width %d height %d pixels %d, want 4x2 with 8 pixels", params.Width, params.Height, len(params.Pixels))
+	}
+	for _, pixel := range params.Pixels {
+		if pixel.Color.Brightness <= 0 {
+			t.Fatalf("pixel %+v has zero brightness, want gradient color", pixel)
+		}
+	}
+}
+
 func testIntent(kind IntentKind) EffectIntent {
 	p := palette.All()["synthwave"]
 	return EffectIntent{
