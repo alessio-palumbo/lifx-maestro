@@ -104,6 +104,38 @@ func TestRenderMultiZoneUsesSurfaceZones(t *testing.T) {
 	}
 }
 
+func TestRenderMultiZoneSweepUsesBeatIndexedAccent(t *testing.T) {
+	events := Render(testIntent(IntentSweep), devices.DeviceInfo{
+		ID: "strip",
+		Capabilities: devices.DeviceCapabilities{
+			Kind: devices.DeviceKindMultiZone,
+			Surface: lifxdevice.Surface{
+				LightType: lifxdevice.LightTypeMultiZone,
+				Zones:     5,
+			},
+		},
+	})
+
+	var params timeline.SetZoneColorsParams
+	if err := json.Unmarshal(events[0].Params, &params); err != nil {
+		t.Fatal(err)
+	}
+	if len(params.Zones) != 5 {
+		t.Fatalf("zones = %d, want 5", len(params.Zones))
+	}
+
+	accentIndex := testIntent(IntentSweep).BeatIndex % len(params.Zones)
+	accent := params.Zones[accentIndex].Color
+	for i, zone := range params.Zones {
+		if i == accentIndex {
+			continue
+		}
+		if zone.Color.Hue == accent.Hue {
+			t.Fatalf("zone %d hue %.1f unexpectedly matches accent hue %.1f", i, zone.Color.Hue, accent.Hue)
+		}
+	}
+}
+
 func TestRenderMatrixUsesAdaptedSurfaceSendDimensions(t *testing.T) {
 	events := Render(testIntent(IntentMatrixWave), devices.DeviceInfo{
 		ID: "tile",

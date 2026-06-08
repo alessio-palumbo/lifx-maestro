@@ -57,6 +57,35 @@ func gradientFrame(intent EffectIntent, surface lifxdevice.Surface, width, heigh
 	return frame
 }
 
+func sweepFrame(intent EffectIntent, surface lifxdevice.Surface, width, height int) lifxeffects.Frame {
+	caps := effectCapabilities(surface, width, height)
+	if caps.Width <= 0 {
+		caps.Width = width
+	}
+	if caps.Height <= 0 {
+		caps.Height = height
+	}
+	size := caps.Width * caps.Height
+	if size <= 0 {
+		size = 1
+	}
+
+	background := effectColor(intent.Palette.BackgroundForSection(intent.Section), intent.Brightness)
+	accent := effectColor(intent.Palette.AccentForBeat(intent.BeatIndex), intent.Brightness)
+	colors := make([]lifxeffects.Color, size)
+	for i := range colors {
+		colors[i] = background
+	}
+	colors[positiveModulo(intent.BeatIndex, size)] = accent
+
+	return lifxeffects.Frame{
+		Colors:   colors,
+		Width:    caps.Width,
+		Height:   caps.Height,
+		Duration: time.Duration(intent.DurationMS) * time.Millisecond,
+	}
+}
+
 func frameFromPaletteColors(colors []palette.Color, width, height int, brightness float64, durationMS int64) lifxeffects.Frame {
 	frameColors := make([]lifxeffects.Color, len(colors))
 	for i, color := range colors {
@@ -212,6 +241,17 @@ func zoneCount(device devices.DeviceInfo) int {
 		return device.Capabilities.Surface.Zones
 	}
 	return 1
+}
+
+func positiveModulo(index, size int) int {
+	if size <= 0 {
+		return 0
+	}
+	index %= size
+	if index < 0 {
+		index += size
+	}
+	return index
 }
 
 func matrixDimensions(device devices.DeviceInfo) (int, int) {

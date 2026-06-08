@@ -78,6 +78,11 @@ func (MultiZoneRenderer) Render(intent EffectIntent, device devices.DeviceInfo) 
 	var colors []palette.Color
 	switch intent.Kind {
 	case IntentSweep:
+		frame := sweepFrame(intent, surfaceForMultiZone(device, count), count, 1)
+		deviceFrames := adaptFrame(frame, surfaceForMultiZone(device, count))
+		if len(deviceFrames) > 0 && len(deviceFrames[0].Colors) > 0 {
+			return []timeline.Event{zoneColorsEvent(intent, device.ID, deviceFrames[0])}
+		}
 		colors = sweepStops(intent, count)
 	case IntentBands:
 		frame := gradientFrame(intent, surfaceForMultiZone(device, count), count, 1)
