@@ -74,45 +74,21 @@ func (MultiZoneRenderer) Render(intent EffectIntent, device devices.DeviceInfo) 
 		return SingleZoneRenderer{}.Render(intent, device)
 	}
 	count := zoneCount(device)
+	surface := surfaceForMultiZone(device, count)
 
-	var colors []palette.Color
+	var frame effectFrame
 	switch intent.Kind {
 	case IntentSweep:
-		frame := sweepFrame(intent, surfaceForMultiZone(device, count), count, 1)
-		deviceFrames := adaptFrame(frame, surfaceForMultiZone(device, count))
-		if len(deviceFrames) > 0 && len(deviceFrames[0].Colors) > 0 {
-			return []timeline.Event{zoneColorsEvent(intent, device.ID, deviceFrames[0])}
-		}
-		colors = sweepStops(intent, count)
-	case IntentBands:
-		frame := gradientFrame(intent, surfaceForMultiZone(device, count), count, 1)
-		deviceFrames := adaptFrame(frame, surfaceForMultiZone(device, count))
-		if len(deviceFrames) > 0 && len(deviceFrames[0].Colors) > 0 {
-			return []timeline.Event{zoneColorsEvent(intent, device.ID, deviceFrames[0])}
-		}
-		colors = intent.Palette.GradientStops(count)
+		frame = sweepFrame(intent, surface, count, 1)
 	default:
-		frame := gradientFrame(intent, surfaceForMultiZone(device, count), count, 1)
-		deviceFrames := adaptFrame(frame, surfaceForMultiZone(device, count))
-		if len(deviceFrames) > 0 && len(deviceFrames[0].Colors) > 0 {
-			return []timeline.Event{zoneColorsEvent(intent, device.ID, deviceFrames[0])}
-		}
-		colors = gradientStops(intent, count)
+		frame = gradientFrame(intent, surface, count, 1)
 	}
 
-	frame := frameFromPaletteColors(colors, count, 1, intent.Brightness, intent.DurationMS)
-	deviceFrames := adaptFrame(frame, surfaceForMultiZone(device, count))
+	deviceFrames := adaptFrame(frame, surface)
 	if len(deviceFrames) > 0 && len(deviceFrames[0].Colors) > 0 {
 		return []timeline.Event{zoneColorsEvent(intent, device.ID, deviceFrames[0])}
 	}
-
-	zones := zoneColorParams(colors, intent.Brightness)
-	return []timeline.Event{{
-		TimeMS: avoidZero(intent.TimeMS),
-		Target: device.ID,
-		Action: "set_zone_colors",
-		Params: timeline.MustParams(timeline.SetZoneColorsParams{DurationMS: intent.DurationMS, Zones: zones}),
-	}}
+	return nil
 }
 
 func (MatrixRenderer) Render(intent EffectIntent, device devices.DeviceInfo) []timeline.Event {
@@ -120,45 +96,23 @@ func (MatrixRenderer) Render(intent EffectIntent, device devices.DeviceInfo) []t
 		return SingleZoneRenderer{}.Render(intent, device)
 	}
 	width, height := matrixDimensions(device)
+	surface := surfaceForMatrix(device, width, height)
 
-	if intent.Kind == IntentPulse {
-		frame := matrixPulseFrame(intent, surfaceForMatrix(device, width, height), width, height)
-		deviceFrames := adaptFrame(frame, surfaceForMatrix(device, width, height))
-		if len(deviceFrames) > 0 && len(deviceFrames[0].Colors) > 0 {
-			return []timeline.Event{matrixColorsEvent(intent, device.ID, deviceFrames[0])}
-		}
+	var frame effectFrame
+	switch intent.Kind {
+	case IntentPulse:
+		frame = matrixPulseFrame(intent, surface, width, height)
+	case IntentSweep, IntentMatrixWave:
+		frame = matrixWaveFrame(intent, surface, width, height)
+	default:
+		frame = gradientFrame(intent, surface, width, height)
 	}
 
-	if intent.Kind != IntentSweep && intent.Kind != IntentMatrixWave {
-		frame := gradientFrame(intent, surfaceForMatrix(device, width, height), width, height)
-		deviceFrames := adaptFrame(frame, surfaceForMatrix(device, width, height))
-		if len(deviceFrames) > 0 && len(deviceFrames[0].Colors) > 0 {
-			return []timeline.Event{matrixColorsEvent(intent, device.ID, deviceFrames[0])}
-		}
-	}
-
-	colors := make([]palette.Color, 0, width*height)
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
-			colors = append(colors, matrixColor(intent, x, y, width, height))
-		}
-	}
-
-	frame := frameFromPaletteColors(colors, width, height, intent.Brightness, intent.DurationMS)
-	deviceFrames := adaptFrame(frame, surfaceForMatrix(device, width, height))
+	deviceFrames := adaptFrame(frame, surface)
 	if len(deviceFrames) > 0 && len(deviceFrames[0].Colors) > 0 {
 		return []timeline.Event{matrixColorsEvent(intent, device.ID, deviceFrames[0])}
 	}
-
-	pixels := matrixColorParams(colors, width, height, intent.Brightness)
-	return []timeline.Event{{
-		TimeMS: avoidZero(intent.TimeMS),
-		Target: device.ID,
-		Action: "set_matrix_colors",
-		Params: timeline.MustParams(timeline.SetMatrixColorsParams{
-			Width: width, Height: height, DurationMS: intent.DurationMS, Pixels: pixels,
-		}),
-	}}
+	return nil
 }
 
 func setColor(timeMS int64, target string, color palette.Color, brightness float64, durationMS int64) timeline.Event {
@@ -174,77 +128,6 @@ func setColor(timeMS int64, target string, color palette.Color, brightness float
 			DurationMS: ptr(durationMS),
 		}),
 	}
-}
-
-func gradientStops(intent EffectIntent, count int) []palette.Color {
-	stops := intent.Palette.GradientStops(count)
-	if len(stops) == 0 {
-		stops = []palette.Color{intent.Color}
-	}
-	return stops
-}
-
-func sweepStops(intent EffectIntent, count int) []palette.Color {
-	base := intent.Palette.BackgroundForSection(intent.Section)
-	accent := intent.Palette.AccentForBeat(intent.BeatIndex)
-	colors := make([]palette.Color, count)
-	for i := range colors {
-		colors[i] = base
-	}
-	if count > 0 {
-		colors[intent.BeatIndex%count] = accent
-	}
-	return colors
-}
-
-func matrixColor(intent EffectIntent, x, y, width, height int) palette.Color {
-	switch intent.Kind {
-	case IntentSweep, IntentMatrixWave:
-		stops := intent.Palette.GradientStops(width)
-		return stops[(x+intent.BeatIndex)%len(stops)]
-	case IntentPulse:
-		cx := float64(width-1) / 2
-		cy := float64(height-1) / 2
-		dist := math.Hypot(float64(x)-cx, float64(y)-cy)
-		if int(dist+float64(intent.BeatIndex))%3 == 0 {
-			return intent.Palette.AccentForBeat(intent.BeatIndex)
-		}
-		return intent.Palette.BackgroundForSection(intent.Section)
-	default:
-		stops := intent.Palette.GradientStops(height)
-		return stops[y%len(stops)]
-	}
-}
-
-func colorValue(color palette.Color, brightness float64) timeline.ColorValue {
-	return timeline.ColorValue{
-		Hue:        math.Round(color.Hue*10) / 10,
-		Saturation: math.Round(color.Saturation*1000) / 1000,
-		Brightness: math.Round(clamp(brightness, 0, 1)*1000) / 1000,
-		Kelvin:     color.Kelvin,
-	}
-}
-
-func zoneColorParams(colors []palette.Color, brightness float64) []timeline.ZoneColorParams {
-	zones := make([]timeline.ZoneColorParams, len(colors))
-	for i, color := range colors {
-		zones[i] = timeline.ZoneColorParams{Index: i, Color: colorValue(color, brightness)}
-	}
-	return zones
-}
-
-func matrixColorParams(colors []palette.Color, width, height int, brightness float64) []timeline.MatrixColorParams {
-	pixels := make([]timeline.MatrixColorParams, 0, width*height)
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
-			i := y*width + x
-			if i >= len(colors) {
-				continue
-			}
-			pixels = append(pixels, timeline.MatrixColorParams{X: x, Y: y, Color: colorValue(colors[i], brightness)})
-		}
-	}
-	return pixels
 }
 
 func avoidZero(timeMS int64) int64 {

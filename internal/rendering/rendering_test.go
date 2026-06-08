@@ -194,6 +194,28 @@ func TestRenderMatrixUsesAdaptedSurfaceSendDimensions(t *testing.T) {
 	}
 }
 
+func TestRenderMatrixWaveUsesBeatShiftedColumns(t *testing.T) {
+	intent := testIntent(IntentMatrixWave)
+	events := Render(intent, devices.DeviceInfo{
+		ID: "tile",
+		Capabilities: devices.DeviceCapabilities{
+			Kind:         devices.DeviceKindMatrix,
+			MatrixWidth:  4,
+			MatrixHeight: 2,
+		},
+	})
+
+	var params timeline.SetMatrixColorsParams
+	if err := json.Unmarshal(events[0].Params, &params); err != nil {
+		t.Fatal(err)
+	}
+	stops := intent.Palette.GradientStops(4)
+	wantHue := stops[intent.BeatIndex%len(stops)].Hue
+	if params.Pixels[0].Color.Hue != wantHue {
+		t.Fatalf("first pixel hue = %.1f, want shifted hue %.1f", params.Pixels[0].Color.Hue, wantHue)
+	}
+}
+
 func TestRenderMatrixGradientUsesEffectGradientFrame(t *testing.T) {
 	events := Render(testIntent(IntentGradient), devices.DeviceInfo{
 		ID: "tile",

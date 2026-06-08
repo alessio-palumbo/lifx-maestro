@@ -11,6 +11,8 @@ import (
 	"lifx-maestro/internal/timeline"
 )
 
+type effectFrame = lifxeffects.Frame
+
 func zoneColorsEvent(intent EffectIntent, target string, frame lifxeffects.DeviceFrame) timeline.Event {
 	return timeline.Event{
 		TimeMS: avoidZero(intent.TimeMS),
@@ -108,6 +110,36 @@ func matrixPulseFrame(intent EffectIntent, surface lifxdevice.Surface, width, he
 				continue
 			}
 			colors = append(colors, background)
+		}
+	}
+
+	return lifxeffects.Frame{
+		Colors:   colors,
+		Width:    caps.Width,
+		Height:   caps.Height,
+		Duration: time.Duration(intent.DurationMS) * time.Millisecond,
+	}
+}
+
+func matrixWaveFrame(intent EffectIntent, surface lifxdevice.Surface, width, height int) lifxeffects.Frame {
+	caps := effectCapabilities(surface, width, height)
+	if caps.Width <= 0 {
+		caps.Width = width
+	}
+	if caps.Height <= 0 {
+		caps.Height = height
+	}
+
+	stops := intent.Palette.GradientStops(caps.Width)
+	if len(stops) == 0 {
+		stops = []palette.Color{intent.Color}
+	}
+
+	colors := make([]lifxeffects.Color, 0, caps.Width*caps.Height)
+	for y := 0; y < caps.Height; y++ {
+		for x := 0; x < caps.Width; x++ {
+			color := stops[positiveModulo(x+intent.BeatIndex, len(stops))]
+			colors = append(colors, effectColor(color, intent.Brightness))
 		}
 	}
 
