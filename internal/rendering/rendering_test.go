@@ -97,6 +97,11 @@ func TestRenderMultiZoneUsesSurfaceZones(t *testing.T) {
 	if len(params.Zones) != 5 {
 		t.Fatalf("zones = %d, want 5", len(params.Zones))
 	}
+	for _, zone := range params.Zones {
+		if zone.Color.Brightness <= 0 {
+			t.Fatalf("zone %+v has zero brightness, want adapted gradient color", zone)
+		}
+	}
 }
 
 func TestRenderMatrixUsesAdaptedSurfaceSendDimensions(t *testing.T) {
