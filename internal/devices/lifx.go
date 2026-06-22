@@ -12,7 +12,12 @@ import (
 	"github.com/alessio-palumbo/lifxprotocol-go/gen/protocol/packets"
 )
 
-const discoverySettlingDelay = time.Second
+const (
+	discoverySettlingDelay  = 2 * time.Second
+	matrixStateWaitTimeout  = 3 * time.Second
+	matrixStatePollDelay    = 250 * time.Millisecond
+	stateCaptureRestoreFade = 500 * time.Millisecond
+)
 
 type LifxDeviceController struct {
 	controller *controller.Controller
@@ -20,9 +25,13 @@ type LifxDeviceController struct {
 }
 
 type stateSnapshot struct {
-	serial    lifxdevice.Serial
-	poweredOn bool
-	color     lifxdevice.Color
+	serial       lifxdevice.Serial
+	poweredOn    bool
+	color        lifxdevice.Color
+	zones        []packets.LightHsbk
+	matrixChains [][]packets.LightHsbk
+	matrixWidth  int
+	matrix       bool
 }
 
 func NewLifxDeviceController() (*LifxDeviceController, error) {
@@ -141,16 +150,23 @@ func (l *LifxDeviceController) CaptureState(target string) error {
 		serialSet[serial] = true
 	}
 
-	devices := l.controller.GetDevices()
+	devices, err := l.waitForRestorableState(serialSet, matrixStateWaitTimeout)
+	if err != nil {
+		return err
+	}
 	snapshots := make([]stateSnapshot, 0, len(serials))
 	for _, device := range devices {
 		if !serialSet[device.Serial] {
 			continue
 		}
 		snapshots = append(snapshots, stateSnapshot{
-			serial:    device.Serial,
-			poweredOn: device.PoweredOn,
-			color:     device.Color,
+			serial:       device.Serial,
+			poweredOn:    device.PoweredOn,
+			color:        device.Color,
+			zones:        cloneHSBKs(device.MultizoneProperties.Zones),
+			matrixChains: cloneMatrixChains(device.MatrixProperties.ChainZones),
+			matrixWidth:  device.MatrixProperties.Width,
+			matrix:       device.LightType == lifxdevice.LightTypeMatrix,
 		})
 	}
 	if len(snapshots) == 0 {
@@ -169,14 +185,28 @@ func (l *LifxDeviceController) RestoreState() error {
 	var restoreErr error
 	for _, snapshot := range l.snapshots {
 		target := snapshot.serial.String()
-		if err := l.SetColor(target, ColorParams{
-			Hue:        snapshot.color.Hue,
-			Saturation: snapshot.color.Saturation,
-			Brightness: snapshot.color.Brightness,
-			Kelvin:     int(snapshot.color.Kelvin),
-			DurationMS: 500,
-		}); err != nil && restoreErr == nil {
-			restoreErr = err
+		if !snapshot.matrix {
+			if err := l.SetColor(target, ColorParams{
+				Hue:        snapshot.color.Hue,
+				Saturation: snapshot.color.Saturation,
+				Brightness: snapshot.color.Brightness,
+				Kelvin:     int(snapshot.color.Kelvin),
+				DurationMS: stateCaptureRestoreFade.Milliseconds(),
+			}); err != nil && restoreErr == nil {
+				restoreErr = err
+			}
+		}
+
+		if len(snapshot.zones) > 0 {
+			if err := l.restoreZoneColors(snapshot.serial, snapshot.zones, stateCaptureRestoreFade); err != nil && restoreErr == nil {
+				restoreErr = err
+			}
+		}
+
+		if len(snapshot.matrixChains) > 0 {
+			if err := l.restoreMatrixColors(snapshot.serial, snapshot.matrixWidth, snapshot.matrixChains, stateCaptureRestoreFade); err != nil && restoreErr == nil {
+				restoreErr = err
+			}
 		}
 
 		var err error
@@ -190,6 +220,30 @@ func (l *LifxDeviceController) RestoreState() error {
 		}
 	}
 	return restoreErr
+}
+
+func (l *LifxDeviceController) restoreZoneColors(serial lifxdevice.Serial, zones []packets.LightHsbk, duration time.Duration) error {
+	for _, msg := range messages.SetMultizoneExtendedColors(0, zones, duration) {
+		if err := l.controller.Send(serial, msg); err != nil {
+			return fmt.Errorf("restore zone colors to %s: %w", serial, err)
+		}
+	}
+	return nil
+}
+
+func (l *LifxDeviceController) restoreMatrixColors(serial lifxdevice.Serial, width int, chains [][]packets.LightHsbk, duration time.Duration) error {
+	for chainIndex, colors := range chains {
+		if len(colors) == 0 {
+			continue
+		}
+		sendWidth := matrixRestoreWidth(width, len(colors))
+		for _, msg := range messages.SetMatrixColorsFromSlice(chainIndex, 1, sendWidth, colors, duration) {
+			if err := l.controller.Send(serial, msg); err != nil {
+				return fmt.Errorf("restore matrix colors to %s chain %d: %w", serial, chainIndex, err)
+			}
+		}
+	}
+	return nil
 }
 
 func (l *LifxDeviceController) Devices() ([]DeviceInfo, error) {
@@ -440,4 +494,116 @@ func matrixLengthFromSurface(surface lifxdevice.Surface, fallback int) int {
 		return fallback
 	}
 	return 1
+}
+
+func (l *LifxDeviceController) waitForRestorableState(serials map[lifxdevice.Serial]bool, timeout time.Duration) ([]lifxdevice.Device, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		devices := l.controller.GetDevices()
+		if err := l.requestRestorableState(serials, devices); err != nil {
+			return nil, err
+		}
+		if matrixStateReady(serials, devices) || time.Now().After(deadline) {
+			return devices, nil
+		}
+		time.Sleep(matrixStatePollDelay)
+	}
+}
+
+func (l *LifxDeviceController) requestRestorableState(serials map[lifxdevice.Serial]bool, devices []lifxdevice.Device) error {
+	for _, device := range devices {
+		if !serials[device.Serial] {
+			continue
+		}
+		for _, msg := range restorableStateMessages(device) {
+			if err := l.controller.Send(device.Serial, msg); err != nil {
+				return fmt.Errorf("request state from %s: %w", device.Serial, err)
+			}
+		}
+	}
+	return nil
+}
+
+func restorableStateMessages(device lifxdevice.Device) []*protocol.Message {
+	if device.LightType == lifxdevice.LightTypeMatrix && device.MatrixProperties.ChainLength == 0 {
+		return []*protocol.Message{
+			protocol.NewMessage(&packets.LightGet{}),
+			protocol.NewMessage(&packets.DeviceGetPower{}),
+			protocol.NewMessage(&packets.TileGetDeviceChain{}),
+		}
+	}
+
+	return device.HighFreqStateMessages()
+}
+
+func matrixStateReady(serials map[lifxdevice.Serial]bool, devices []lifxdevice.Device) bool {
+	for _, device := range devices {
+		if !serials[device.Serial] || device.LightType != lifxdevice.LightTypeMatrix || !device.PoweredOn {
+			continue
+		}
+		if !matrixDeviceStateReady(device) {
+			return false
+		}
+	}
+	return true
+}
+
+func matrixDeviceStateReady(device lifxdevice.Device) bool {
+	length := matrixChainLength(device)
+	if length <= 0 || len(device.MatrixProperties.ChainZones) < length {
+		return false
+	}
+	for _, colors := range device.MatrixProperties.ChainZones[:length] {
+		if !hasVisibleHSBK(colors) {
+			return false
+		}
+	}
+	return true
+}
+
+func cloneHSBKs(colors []packets.LightHsbk) []packets.LightHsbk {
+	if !hasVisibleHSBK(colors) {
+		return nil
+	}
+	return append([]packets.LightHsbk(nil), colors...)
+}
+
+func cloneMatrixChains(chains [][]packets.LightHsbk) [][]packets.LightHsbk {
+	if len(chains) == 0 {
+		return nil
+	}
+	cloned := make([][]packets.LightHsbk, len(chains))
+	hasState := false
+	for i, colors := range chains {
+		if hasVisibleHSBK(colors) {
+			cloned[i] = append([]packets.LightHsbk(nil), colors...)
+			hasState = true
+		}
+	}
+	if !hasState {
+		return nil
+	}
+	return cloned
+}
+
+func hasVisibleHSBK(colors []packets.LightHsbk) bool {
+	for _, color := range colors {
+		if color.Hue != 0 || color.Saturation != 0 || color.Brightness != 0 || color.Kelvin != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func matrixRestoreWidth(width, colorCount int) int {
+	if width > 0 {
+		return width
+	}
+	if colorCount <= 0 {
+		return 1
+	}
+	if colorCount%8 == 0 {
+		return 8
+	}
+	return colorCount
 }

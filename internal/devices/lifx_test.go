@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	lifxdevice "github.com/alessio-palumbo/lifxlan-go/pkg/device"
+	"github.com/alessio-palumbo/lifxlan-go/pkg/protocol"
+	"github.com/alessio-palumbo/lifxprotocol-go/gen/protocol/packets"
 )
 
 func TestNormalizePercent(t *testing.T) {
@@ -119,4 +121,143 @@ func TestMatrixLengthFromSurfaceUsesLifxSurfaceChains(t *testing.T) {
 	if got := matrixLengthFromSurface(surface, 0); got != 1 {
 		t.Fatalf("matrixLengthFromSurface = %d, want 1", got)
 	}
+}
+
+func TestCloneMatrixChainsDeepCopiesColors(t *testing.T) {
+	chains := [][]packets.LightHsbk{
+		{{Hue: 1, Saturation: 2, Brightness: 3, Kelvin: 3500}},
+		{{Hue: 4, Saturation: 5, Brightness: 6, Kelvin: 4000}},
+	}
+
+	got := cloneMatrixChains(chains)
+	chains[0][0].Hue = 99
+
+	if got[0][0].Hue != 1 {
+		t.Fatalf("cloned hue = %d, want original 1", got[0][0].Hue)
+	}
+	if got[1][0].Kelvin != 4000 {
+		t.Fatalf("cloned kelvin = %d, want 4000", got[1][0].Kelvin)
+	}
+}
+
+func TestCloneSpatialStateSkipsZeroBuffers(t *testing.T) {
+	zeroColors := []packets.LightHsbk{{}, {}}
+
+	if got := cloneHSBKs(zeroColors); got != nil {
+		t.Fatalf("cloneHSBKs zero buffer = %#v, want nil", got)
+	}
+	if got := cloneMatrixChains([][]packets.LightHsbk{zeroColors}); got != nil {
+		t.Fatalf("cloneMatrixChains zero buffer = %#v, want nil", got)
+	}
+}
+
+func TestMatrixRestoreWidth(t *testing.T) {
+	if got := matrixRestoreWidth(5, 64); got != 5 {
+		t.Fatalf("matrixRestoreWidth with explicit width = %d, want 5", got)
+	}
+	if got := matrixRestoreWidth(0, 64); got != 8 {
+		t.Fatalf("matrixRestoreWidth for tile colors = %d, want 8", got)
+	}
+	if got := matrixRestoreWidth(0, 10); got != 10 {
+		t.Fatalf("matrixRestoreWidth fallback = %d, want 10", got)
+	}
+}
+
+func TestMatrixStateReadyRequiresPoweredOnMatrixColors(t *testing.T) {
+	serial, err := lifxdevice.SerialFromHex("001122334455")
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected := map[lifxdevice.Serial]bool{serial: true}
+	device := lifxdevice.Device{
+		Serial:    serial,
+		LightType: lifxdevice.LightTypeMatrix,
+		PoweredOn: true,
+	}
+	device.MatrixProperties.Width = 8
+	device.MatrixProperties.Height = 8
+	device.MatrixProperties.ChainLength = 1
+	device.MatrixProperties.ChainZones = [][]packets.LightHsbk{{{}, {}}}
+
+	if matrixStateReady(selected, []lifxdevice.Device{device}) {
+		t.Fatal("matrix state should not be ready with only zero colors")
+	}
+
+	device.MatrixProperties.ChainZones[0][0] = packets.LightHsbk{Hue: 1, Brightness: 1, Kelvin: 3500}
+	if !matrixStateReady(selected, []lifxdevice.Device{device}) {
+		t.Fatal("matrix state should be ready with visible colors")
+	}
+}
+
+func TestMatrixStateReadyIgnoresPoweredOffMatrix(t *testing.T) {
+	serial, err := lifxdevice.SerialFromHex("001122334455")
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected := map[lifxdevice.Serial]bool{serial: true}
+	device := lifxdevice.Device{
+		Serial:    serial,
+		LightType: lifxdevice.LightTypeMatrix,
+		PoweredOn: false,
+	}
+	device.MatrixProperties.ChainLength = 1
+
+	if !matrixStateReady(selected, []lifxdevice.Device{device}) {
+		t.Fatal("powered-off matrix should not block capture")
+	}
+}
+
+func TestMatrixSnapshotIdentifiesMatrixDevice(t *testing.T) {
+	device := lifxdevice.Device{LightType: lifxdevice.LightTypeMatrix}
+	snapshot := stateSnapshot{
+		matrix: device.LightType == lifxdevice.LightTypeMatrix,
+	}
+
+	if !snapshot.matrix {
+		t.Fatal("matrix snapshot should be marked as matrix")
+	}
+}
+
+func TestRestorableStateMessagesRequestMatrixChainBeforePixels(t *testing.T) {
+	device := lifxdevice.Device{LightType: lifxdevice.LightTypeMatrix}
+
+	got := restorableStateMessages(device)
+
+	if !hasPayload(got, uint16(packets.PayloadTypeTileGetDeviceChain)) {
+		t.Fatalf("messages should request matrix chain metadata before pixels")
+	}
+	if hasPayload(got, uint16(packets.PayloadTypeTileGet64)) {
+		t.Fatalf("messages should not request matrix pixels without chain metadata")
+	}
+}
+
+func TestRestorableStateMessagesRequestMatrixPixels(t *testing.T) {
+	device := lifxdevice.Device{LightType: lifxdevice.LightTypeMatrix}
+	device.MatrixProperties.Width = 8
+	device.MatrixProperties.Height = 8
+	device.MatrixProperties.ChainLength = 2
+	device.MatrixProperties.StatePackets = 1
+
+	got := restorableStateMessages(device)
+
+	if !hasPayload(got, uint16(packets.PayloadTypeTileGet64)) {
+		t.Fatalf("messages should request matrix pixels when chain metadata is known")
+	}
+	if countPayload(got, uint16(packets.PayloadTypeTileGet64)) != 2 {
+		t.Fatalf("TileGet64 message count = %d, want 2", countPayload(got, uint16(packets.PayloadTypeTileGet64)))
+	}
+}
+
+func hasPayload(messages []*protocol.Message, payloadType uint16) bool {
+	return countPayload(messages, payloadType) > 0
+}
+
+func countPayload(messages []*protocol.Message, payloadType uint16) int {
+	count := 0
+	for _, msg := range messages {
+		if msg.Type() == payloadType {
+			count++
+		}
+	}
+	return count
 }

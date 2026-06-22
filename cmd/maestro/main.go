@@ -196,7 +196,6 @@ func performCommand() *cli.Command {
 				defer closeController(lifxController)
 				controller = lifxController
 			}
-			defer setupStateRestore(controller, target)()
 
 			ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
 			defer stop()

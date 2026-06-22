@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 
 	"lifx-maestro/internal/analysis"
 	"lifx-maestro/internal/audio"
@@ -62,6 +63,9 @@ func Run(ctx context.Context, audioPath string, controller devices.DeviceControl
 		return nil, err
 	}
 
+	restore := setupStateRestore(controller, options.Target)
+	defer restore()
+
 	audioPlayer, err := audio.NewBeepPlayer(audioPath)
 	if err != nil {
 		return nil, err
@@ -97,16 +101,35 @@ func Run(ctx context.Context, audioPath string, controller devices.DeviceControl
 			return nil, err
 		}
 	case <-ctx.Done():
+		cancel()
+		<-lightingDone
 		return nil, ctx.Err()
 	}
 
 	select {
 	case <-audioPlayer.Done():
 	case <-ctx.Done():
+		cancel()
 		return nil, ctx.Err()
 	}
 
 	return &Result{Analysis: song, Events: len(tl.Events)}, nil
+}
+
+func setupStateRestore(controller devices.DeviceController, target string) func() {
+	restorer, ok := controller.(devices.StateRestorer)
+	if !ok {
+		return func() {}
+	}
+	if err := restorer.CaptureState(target); err != nil {
+		fmt.Fprintf(os.Stderr, "maestro: capture state: %v\n", err)
+		return func() {}
+	}
+	return func() {
+		if err := restorer.RestoreState(); err != nil {
+			fmt.Fprintf(os.Stderr, "maestro: restore state: %v\n", err)
+		}
+	}
 }
 
 func deviceInfos(controller devices.DeviceController) []devices.DeviceInfo {
