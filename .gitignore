@@ -6,9 +6,14 @@
 
 # Go build/test output
 bin/
+build/bin/
 dist/
 coverage.out
 *.test
+
+# Frontend dependencies/build metadata
+frontend/node_modules/
+frontend/package.json.md5
 
 # Python environments and caches
 .venv/
