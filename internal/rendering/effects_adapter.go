@@ -252,7 +252,7 @@ func effectColor(color palette.Color, brightness float64) lifxeffects.Color {
 	return lifxeffects.Color{
 		Hue:        math.Round(color.Hue*10) / 10,
 		Saturation: math.Round(clamp(color.Saturation, 0, 1)*1000) / 10,
-		Brightness: math.Round(clamp(brightness, 0, 1)*1000) / 10,
+		Brightness: math.Round(clamp(brightness, 0.01, 1)*1000) / 10,
 		Kelvin:     uint16(color.Kelvin),
 	}
 }
@@ -260,8 +260,8 @@ func effectColor(color palette.Color, brightness float64) lifxeffects.Color {
 func timelineColor(color lifxeffects.Color) timeline.ColorValue {
 	return timeline.ColorValue{
 		Hue:        math.Round(color.Hue*10) / 10,
-		Saturation: math.Round(clamp(color.Saturation, 0, 100)*10) / 1000,
-		Brightness: math.Round(clamp(color.Brightness, 0, 100)*10) / 1000,
+		Saturation: math.Round(clamp(color.Saturation, 0, 100)*10) / 10,
+		Brightness: math.Round(clamp(color.Brightness, 1, 100)*10) / 10,
 		Kelvin:     int(color.Kelvin),
 	}
 }

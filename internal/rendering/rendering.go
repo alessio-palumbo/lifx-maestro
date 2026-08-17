@@ -124,8 +124,8 @@ func setColor(timeMS int64, target string, color palette.Color, brightness float
 		Action: "set_color",
 		Params: timeline.MustParams(timeline.SetColorParams{
 			Hue:        ptr(math.Round(color.Hue*10) / 10),
-			Saturation: ptr(math.Round(color.Saturation*1000) / 1000),
-			Brightness: ptr(math.Round(clamp(brightness, 0, 1)*1000) / 1000),
+			Saturation: ptr(math.Round(clamp(color.Saturation, 0, 1)*1000) / 10),
+			Brightness: ptr(math.Round(clamp(brightness, 0.01, 1)*1000) / 10),
 			Kelvin:     ptr(color.Kelvin),
 			DurationMS: ptr(durationMS),
 		}),

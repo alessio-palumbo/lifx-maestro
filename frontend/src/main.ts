@@ -96,6 +96,8 @@ type AppState = {
   inspectorOpen: boolean;
   inspectorWidth: number;
   sidebarOpen: boolean;
+  timelineScrollLeft: number;
+  timelineScrollTop: number;
 };
 
 const state: AppState = {
@@ -124,6 +126,8 @@ const state: AppState = {
   inspectorOpen: false,
   inspectorWidth: 306,
   sidebarOpen: true,
+  timelineScrollLeft: 0,
+  timelineScrollTop: 0,
 };
 
 let playTimer: number | undefined;
@@ -155,6 +159,7 @@ async function bootstrap() {
 }
 
 function render() {
+  captureTimelineScroll();
   app.innerHTML = `
     <div class="shell" style="--inspector-width:${state.inspectorOpen ? state.inspectorWidth : 0}px;">
       ${renderToolbar()}
@@ -171,6 +176,7 @@ function render() {
     </div>
   `;
   bindEvents();
+  restoreTimelineScroll();
 }
 
 function renderToolbar() {
@@ -327,7 +333,7 @@ function renderTimeline() {
     return `<section class="timeline empty">Choose a song to generate a choreography.</section>`;
   }
 
-  const duration = Math.max(session.timeline.duration_ms, 1);
+  const duration = Math.max(visibleTimelineDurationMS(session), 1);
   const timelineWidth = timelineWidthPx(duration);
   const sections = (session.analysis.sections ?? []).map((section) => {
     const left = timeToX(section.start_ms);
@@ -340,7 +346,7 @@ function renderTimeline() {
     .map((beat) => `<span class="beat" style="left:${timeToX(beat)}px"></span>`)
     .join('');
 
-  const lanes = laneIDs(session).map((lane) => renderLane(session, lane)).join('');
+  const lanes = laneIDs(session).map((lane) => renderLane(session, lane, timelineWidth)).join('');
   const ticks = renderTicks(duration);
   const playhead = `<div class="playhead" style="left:${timeToX(state.playheadMS)}px"></div>`;
 
@@ -372,20 +378,17 @@ function renderTimeline() {
   `;
 }
 
-function renderLane(session: EditorSession, lane: string) {
-  const duration = Math.max(session.timeline.duration_ms, 1);
-  const timelineWidth = timelineWidthPx(duration);
+function renderLane(session: EditorSession, lane: string, timelineWidth: number) {
   const device = session.devices.find((candidate) => candidate.id === lane);
   const label = device?.label ?? lane;
   const events = session.timeline.events
     .map((event, index) => ({ event, index }))
     .filter(({ event }) => eventAppliesToLane(event, device, lane))
     .map(({ event, index }) => {
-      const params = event.params ?? {};
-      const eventDuration = Number(params.duration_ms ?? 180);
+      const eventDuration = eventDurationMS(event) || 180;
       const left = timeToX(event.time_ms);
       const width = Math.max(timeToX(eventDuration), event.action === 'power_on' ? 8 : 14);
-      const color = eventColor(event);
+      const eventBackground = eventBackgroundStyle(event);
       const selected = index === state.selectedEvent ? 'selected' : '';
       return `
         <button
@@ -393,7 +396,7 @@ function renderLane(session: EditorSession, lane: string) {
           data-event="${index}"
           draggable="true"
           title="${escapeAttr(event.action)} ${formatTime(event.time_ms)}"
-          style="left:${left}px;width:${width}px;--event-color:${color};"
+          style="left:${left}px;width:${width}px;${eventBackground}"
         >
           <span>${shortAction(event.action)}</span>
         </button>
@@ -464,12 +467,15 @@ function renderInspector() {
     `;
   }
   const params = event.params ?? {};
-  const hue = Number(params.hue ?? colorFromNested(params, 'hue') ?? 240);
-  const saturation = Number(params.saturation ?? colorFromNested(params, 'saturation') ?? 100);
-  const brightness = Number(params.brightness ?? colorFromNested(params, 'brightness') ?? 70);
-  const kelvin = Number(params.kelvin ?? colorFromNested(params, 'kelvin') ?? 3500);
-  const durationMS = Number(params.duration_ms ?? 180);
+  const hue = colorParam(params, 'hue', 240);
+  const saturation = percentParam(params, 'saturation', 100);
+  const brightness = percentParam(params, 'brightness', 70);
+  const kelvin = colorParam(params, 'kelvin', 3500);
+  const durationMS = durationParam(params, 180);
   const targetLabel = eventTargetLabel(session, event);
+  const spatial = spatialEventSummary(event);
+  const colorControlsDisabled = spatial ? 'disabled' : '';
+  const colorControlHint = spatial ? `<div class="field-note">Gradient editing is not available yet. Duplicate or delete the event, or regenerate the timeline to change this gradient.</div>` : '';
 
   return `
     <aside class="inspector">
@@ -481,11 +487,17 @@ function renderInspector() {
       </div>
       <div id="inspector-resize" class="resize-handle"></div>
       <div class="color-editor">
-        <div class="swatch" style="background:${eventColor(event)}"></div>
+        <div class="swatch ${spatial ? 'gradient' : ''}" style="${eventBackgroundStyle(event)}"></div>
         <div class="color-readout">
-          <strong>${Math.round(hue)}°</strong>
-          <span>${Math.round(saturation)}% sat · ${Math.round(brightness)}% bri</span>
-          <span>${Math.round(kelvin)} K</span>
+          ${spatial ? `
+            <strong>${escapeHTML(spatial.title)}</strong>
+            <span>${escapeHTML(spatial.detail)}</span>
+            <span>${escapeHTML(spatial.colors)}</span>
+          ` : `
+            <strong>${Math.round(hue)}°</strong>
+            <span>${Math.round(saturation)}% sat · ${Math.round(brightness)}% bri</span>
+            <span>${Math.round(kelvin)} K</span>
+          `}
         </div>
       </div>
       <label class="edit-field">
@@ -498,20 +510,21 @@ function renderInspector() {
       </label>
       <label class="edit-field">
         <span>Hue</span>
-        <input id="event-hue" class="hue-range" type="range" min="0" max="360" value="${hue}" />
+        <input id="event-hue" class="hue-range" type="range" min="0" max="360" value="${hue}" ${colorControlsDisabled} />
       </label>
       <label class="edit-field">
         <span>Saturation</span>
-        <input id="event-saturation" type="range" min="0" max="100" value="${saturation}" />
+        <input id="event-saturation" type="range" min="0" max="100" value="${saturation}" ${colorControlsDisabled} />
       </label>
       <label class="edit-field">
         <span>Brightness</span>
-        <input id="event-brightness" type="range" min="0" max="100" value="${brightness}" />
+        <input id="event-brightness" type="range" min="1" max="100" value="${brightness}" ${colorControlsDisabled} />
       </label>
       <label class="edit-field">
         <span>Kelvin</span>
-        <input id="event-kelvin" type="number" min="1500" max="9000" step="100" value="${kelvin}" />
+        <input id="event-kelvin" type="number" min="1500" max="9000" step="100" value="${kelvin}" ${colorControlsDisabled} />
       </label>
+      ${colorControlHint}
       <label class="edit-field">
         <span>Duration (ms)</span>
         <input id="event-duration" type="number" min="0" step="10" value="${durationMS}" />
@@ -634,11 +647,14 @@ function bindInspector() {
   const update = () => {
     const params = mutableParams(event);
     event.time_ms = clamp(Number(inputValue('event-time', String(event.time_ms))), 0, session.timeline.duration_ms);
-    params.hue = Number(inputValue('event-hue', String(params.hue ?? 240)));
-    params.saturation = Number(inputValue('event-saturation', String(params.saturation ?? 100)));
-    params.brightness = Number(inputValue('event-brightness', String(params.brightness ?? 70)));
-    params.kelvin = Number(inputValue('event-kelvin', String(params.kelvin ?? 3500)));
-    params.duration_ms = Number(inputValue('event-duration', String(params.duration_ms ?? 180)));
+    const color = {
+      hue: Number(inputValue('event-hue', String(colorParam(params, 'hue', 240)))),
+      saturation: Number(inputValue('event-saturation', String(percentParam(params, 'saturation', 100)))),
+      brightness: clamp(Number(inputValue('event-brightness', String(percentParam(params, 'brightness', 70)))), 1, 100),
+      kelvin: Number(inputValue('event-kelvin', String(colorParam(params, 'kelvin', 3500)))),
+    };
+    applyEventColorParams(params, color);
+    params.duration_ms = Number(inputValue('event-duration', String(durationParam(params, 180))));
     state.status = 'Edited selected event';
     sortTimeline(session.timeline);
     state.selectedEvent = session.timeline.events.indexOf(event);
@@ -1152,6 +1168,13 @@ function timelineForSelectedTargets(session: EditorSession): Timeline {
   return { ...session.timeline, events };
 }
 
+function visibleTimelineDurationMS(session: EditorSession) {
+  const timeline = timelineForSelectedTargets(session);
+  return timeline.events.reduce((maxEnd, event) => {
+    return Math.max(maxEnd, event.time_ms + eventDurationMS(event));
+  }, session.timeline.duration_ms);
+}
+
 function generatedTimelineCoversSelectedTargets(session: EditorSession) {
   const devices = selectedTargetDevices(session);
   if (devices.length === 0) {
@@ -1191,6 +1214,28 @@ function setZoom(value: number) {
 
 function timelineWidthPx(durationMS: number) {
   return Math.max(900, Math.ceil(durationMS / 1000 * state.zoomPxPerSecond));
+}
+
+function captureTimelineScroll() {
+  const scroll = document.querySelector<HTMLElement>('.timeline-scroll');
+  if (!scroll) {
+    return;
+  }
+  state.timelineScrollLeft = scroll.scrollLeft;
+  state.timelineScrollTop = scroll.scrollTop;
+}
+
+function restoreTimelineScroll() {
+  const scroll = document.querySelector<HTMLElement>('.timeline-scroll');
+  if (!scroll) {
+    return;
+  }
+  scroll.scrollLeft = state.timelineScrollLeft;
+  scroll.scrollTop = state.timelineScrollTop;
+  scroll.addEventListener('scroll', () => {
+    state.timelineScrollLeft = scroll.scrollLeft;
+    state.timelineScrollTop = scroll.scrollTop;
+  }, { passive: true });
 }
 
 function timeToX(ms: number) {
@@ -1362,25 +1407,173 @@ function bindInspectorResize() {
 
 function eventColor(event: TimelineEvent) {
   const params = event.params ?? {};
-  const hue = Number(params.hue ?? colorFromNested(params, 'hue') ?? 0);
-  const saturation = Number(params.saturation ?? colorFromNested(params, 'saturation') ?? 0);
-  const brightness = Number(params.brightness ?? colorFromNested(params, 'brightness') ?? 80);
+  const hue = colorParam(params, 'hue', 0);
+  const saturation = percentParam(params, 'saturation', 0);
+  const brightness = percentParam(params, 'brightness', 80);
   if (event.action === 'power_on') {
     return '#f3e7c8';
   }
   return hsla(hue, saturation, brightness);
 }
 
-function colorFromNested(params: Record<string, unknown>, key: string) {
-  const zones = params.zones as Array<{ color?: Record<string, unknown> }> | undefined;
-  if (zones?.[0]?.color?.[key] !== undefined) {
-    return zones[0].color[key];
+function eventBackgroundStyle(event: TimelineEvent) {
+  const colors = eventColors(event);
+  if (colors.length <= 1) {
+    const color = colors[0] ?? eventColor(event);
+    return `--event-color:${color};--event-bg:${color};`;
   }
-  const pixels = params.pixels as Array<{ color?: Record<string, unknown> }> | undefined;
-  if (pixels?.[0]?.color?.[key] !== undefined) {
-    return pixels[0].color[key];
+  const stops = colors
+    .slice(0, 8)
+    .map((color, index, list) => `${color} ${Math.round((index / Math.max(list.length - 1, 1)) * 100)}%`)
+    .join(',');
+  return `--event-color:${colors[0]};--event-bg:linear-gradient(90deg,${stops});`;
+}
+
+function eventColors(event: TimelineEvent) {
+  if (event.action === 'power_on') {
+    return ['#f3e7c8'];
+  }
+  const params = event.params ?? {};
+  const zones = arrayParam(params, 'zones') as Array<Record<string, unknown>>;
+  if (zones?.length) {
+    return uniqueColorStops(zones.map((zone) => colorRecordToHsla(recordParam(zone, 'color'))));
+  }
+  const pixels = arrayParam(params, 'pixels') as Array<Record<string, unknown>>;
+  if (pixels?.length) {
+    return uniqueColorStops(pixels.map((pixel) => colorRecordToHsla(recordParam(pixel, 'color'))));
+  }
+  return [eventColor(event)];
+}
+
+function spatialEventSummary(event: TimelineEvent) {
+  const params = event.params ?? {};
+  const zones = arrayParam(params, 'zones') as Array<Record<string, unknown>>;
+  if (zones.length) {
+    const colors = eventColors(event);
+    return {
+      title: 'Zone gradient',
+      detail: `${zones.length} zones`,
+      colors: `${colors.length} ${colors.length === 1 ? 'color' : 'colors'}`,
+    };
+  }
+
+  const pixels = arrayParam(params, 'pixels') as Array<Record<string, unknown>>;
+  if (pixels.length) {
+    const width = Number(paramValue(params, 'width') ?? 0);
+    const height = Number(paramValue(params, 'height') ?? 0);
+    const colors = eventColors(event);
+    const dimensions = width > 0 && height > 0 ? `${width}x${height} matrix` : 'matrix frame';
+    return {
+      title: 'Matrix frame',
+      detail: `${dimensions}, ${pixels.length} pixels`,
+      colors: `${colors.length} ${colors.length === 1 ? 'color' : 'colors'}`,
+    };
+  }
+
+  return undefined;
+}
+
+function colorRecordToHsla(color: Record<string, unknown> | undefined) {
+  if (!color) {
+    return hsla(0, 0, 80);
+  }
+  return hsla(colorRecordNumber(color, 'hue', 0), percentValue(colorRecordNumber(color, 'saturation', 0)), percentValue(colorRecordNumber(color, 'brightness', 80)));
+}
+
+function uniqueColorStops(colors: string[]) {
+  const stops: string[] = [];
+  for (const color of colors) {
+    if (stops[stops.length - 1] !== color) {
+      stops.push(color);
+    }
+    if (stops.length >= 8) {
+      break;
+    }
+  }
+  return stops.length > 0 ? stops : [hsla(0, 0, 80)];
+}
+
+function eventDurationMS(event: TimelineEvent) {
+  const params = event.params ?? {};
+  return Math.max(0, durationParam(params, 0));
+}
+
+function colorFromNested(params: Record<string, unknown>, key: string) {
+  const zones = arrayParam(params, 'zones') as Array<Record<string, unknown>>;
+  const zoneColor = zones[0] ? recordParam(zones[0], 'color') : undefined;
+  if (zoneColor && paramValue(zoneColor, key) !== undefined) {
+    return paramValue(zoneColor, key);
+  }
+  const pixels = arrayParam(params, 'pixels') as Array<Record<string, unknown>>;
+  const pixelColor = pixels[0] ? recordParam(pixels[0], 'color') : undefined;
+  if (pixelColor) {
+    return paramValue(pixelColor, key);
   }
   return undefined;
+}
+
+function colorParam(params: Record<string, unknown>, key: string, fallback: number) {
+  const direct = paramValue(params, key);
+  if (direct !== undefined) {
+    return Number(direct);
+  }
+  const nested = colorFromNested(params, key);
+  if (nested !== undefined) {
+    return Number(nested);
+  }
+  return fallback;
+}
+
+function percentParam(params: Record<string, unknown>, key: string, fallback: number) {
+  const value = percentValue(colorParam(params, key, fallback));
+  return key === 'brightness' ? clamp(value, 1, 100) : value;
+}
+
+function durationParam(params: Record<string, unknown>, fallback: number) {
+  return Number(paramValue(params, 'duration_ms') ?? paramValue(params, 'durationMS') ?? fallback);
+}
+
+function percentValue(value: number) {
+  return value >= 0 && value <= 1 ? value * 100 : value;
+}
+
+function paramValue(record: Record<string, unknown>, key: string) {
+  return record[key] ?? record[toCamelCase(key)] ?? record[toPascalCase(key)];
+}
+
+function colorRecordNumber(record: Record<string, unknown>, key: string, fallback: number) {
+  return Number(paramValue(record, key) ?? fallback);
+}
+
+function recordParam(record: Record<string, unknown>, key: string) {
+  const value = paramValue(record, key);
+  return value && typeof value === 'object' ? value as Record<string, unknown> : undefined;
+}
+
+function arrayParam(record: Record<string, unknown>, key: string) {
+  const value = paramValue(record, key);
+  return Array.isArray(value) ? value : [];
+}
+
+function toCamelCase(key: string) {
+  return key.replace(/_([a-z])/g, (_, char: string) => char.toUpperCase());
+}
+
+function toPascalCase(key: string) {
+  const camel = toCamelCase(key);
+  return camel.charAt(0).toUpperCase() + camel.slice(1);
+}
+
+function applyEventColorParams(params: Record<string, unknown>, color: Record<string, number>) {
+  const zones = arrayParam(params, 'zones') as Array<Record<string, unknown>>;
+  const pixels = arrayParam(params, 'pixels') as Array<Record<string, unknown>>;
+  if (zones.length || pixels.length) {
+    for (const item of [...zones, ...pixels]) {
+      item.color = { ...recordParam(item, 'color'), ...color };
+    }
+    return;
+  }
+  Object.assign(params, color);
 }
 
 function shortAction(action: string) {

@@ -31,6 +31,19 @@ func TestColorParamsDecodesTypedParams(t *testing.T) {
 	}
 }
 
+func TestColorParamsFloorsZeroBrightness(t *testing.T) {
+	got, err := colorParams(timeline.MustParams(timeline.SetColorParams{
+		Brightness: ptr(0.0),
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got.Brightness != 1 {
+		t.Fatalf("brightness = %v, want 1", got.Brightness)
+	}
+}
+
 func TestColorParamsRejectsUnknownFields(t *testing.T) {
 	_, err := colorParams(timeline.MustParams(map[string]interface{}{
 		"hue":     240,

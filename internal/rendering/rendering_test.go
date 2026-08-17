@@ -24,6 +24,17 @@ func TestRenderSingleZoneFallsBackToSetColor(t *testing.T) {
 	if events[0].Action != "set_color" {
 		t.Fatalf("action = %q, want set_color", events[0].Action)
 	}
+
+	var params timeline.SetColorParams
+	if err := json.Unmarshal(events[0].Params, &params); err != nil {
+		t.Fatal(err)
+	}
+	if got := *params.Saturation; got < 90 || got > 100 {
+		t.Fatalf("saturation = %v, want 0-100 range", got)
+	}
+	if got := *params.Brightness; got < 60 || got > 80 {
+		t.Fatalf("brightness = %v, want 0-100 range", got)
+	}
 }
 
 func TestRenderMultiZoneCreatesZoneColors(t *testing.T) {
@@ -48,6 +59,12 @@ func TestRenderMultiZoneCreatesZoneColors(t *testing.T) {
 	}
 	if len(params.Zones) != 4 {
 		t.Fatalf("zones = %d, want 4", len(params.Zones))
+	}
+	if got := params.Zones[0].Color.Saturation; got <= 1 || got > 100 {
+		t.Fatalf("zone saturation = %v, want 0-100 range", got)
+	}
+	if got := params.Zones[0].Color.Brightness; got <= 1 || got > 100 {
+		t.Fatalf("zone brightness = %v, want 0-100 range", got)
 	}
 }
 

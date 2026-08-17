@@ -566,7 +566,11 @@ button {
 }
 
 .ruler-label {
+  position: sticky;
+  left: 0;
+  z-index: 5;
   border-right: 1px solid #20252d;
+  background: #101318;
 }
 
 .ruler-content {
@@ -660,12 +664,18 @@ button {
 }
 
 .lane-label {
+  position: sticky;
+  left: 0;
+  z-index: 2;
   display: flex;
   align-items: center;
   min-width: 0;
+  padding-left: 0;
   padding-right: 12px;
   overflow: hidden;
   color: #b8c2d0;
+  background: #161a20;
+  border-right: 1px solid #20252d;
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -688,11 +698,12 @@ button {
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.22);
   border-radius: 6px;
-  color: #081018;
-  background: var(--event-color);
+  color: #ffffff;
+  background: var(--event-bg, var(--event-color));
   box-shadow: 0 0 18px color-mix(in srgb, var(--event-color), transparent 72%);
   font-size: 11px;
   font-weight: 700;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -766,6 +777,12 @@ button {
   min-height: 76px;
   border: 1px solid rgba(255, 255, 255, 0.25);
   border-radius: 8px;
+  background: var(--event-bg, var(--event-color));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.swatch.gradient {
+  background-size: 100% 100%;
 }
 
 .color-readout {
@@ -808,8 +825,23 @@ button {
   padding: 0;
 }
 
+.edit-field input:disabled {
+  opacity: 0.48;
+}
+
 .edit-field .hue-range {
   accent-color: #35d2ff;
+}
+
+.field-note {
+  margin: -2px 0 12px;
+  padding: 9px 10px;
+  border: 1px solid #2d3440;
+  border-radius: 8px;
+  color: #8d98a8;
+  background: #11151b;
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .inspector-actions {

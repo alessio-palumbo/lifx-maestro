@@ -167,7 +167,7 @@ func colorParams(raw json.RawMessage) (devices.ColorParams, error) {
 	return devices.ColorParams{
 		Hue:        valueOr(params.Hue, 0),
 		Saturation: valueOr(params.Saturation, 0),
-		Brightness: valueOr(params.Brightness, 0),
+		Brightness: brightnessOr(params.Brightness, 1),
 		Kelvin:     valueOr(params.Kelvin, 3500),
 		DurationMS: valueOr(params.DurationMS, 0),
 	}, nil
@@ -189,7 +189,7 @@ func zoneColorParams(raw json.RawMessage) (zoneColorCommand, error) {
 			Index:      zone.Index,
 			Hue:        zone.Color.Hue,
 			Saturation: zone.Color.Saturation,
-			Brightness: zone.Color.Brightness,
+			Brightness: minBrightness(zone.Color.Brightness),
 			Kelvin:     zone.Color.Kelvin,
 		})
 	}
@@ -215,7 +215,7 @@ func matrixColorParams(raw json.RawMessage) (matrixColorCommand, error) {
 			Y:          pixel.Y,
 			Hue:        pixel.Color.Hue,
 			Saturation: pixel.Color.Saturation,
-			Brightness: pixel.Color.Brightness,
+			Brightness: minBrightness(pixel.Color.Brightness),
 			Kelvin:     pixel.Color.Kelvin,
 		})
 	}
@@ -239,6 +239,20 @@ func valueOr[T any](value *T, fallback T) T {
 		return fallback
 	}
 	return *value
+}
+
+func brightnessOr(value *float64, fallback float64) float64 {
+	if value == nil {
+		return fallback
+	}
+	return minBrightness(*value)
+}
+
+func minBrightness(value float64) float64 {
+	if value <= 0 {
+		return 1
+	}
+	return value
 }
 
 func FormatOffset(d time.Duration) string {
