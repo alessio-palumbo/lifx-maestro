@@ -295,6 +295,28 @@ func (a *App) StopPreview() {
 	}
 }
 
+func (a *App) PausePreview() error {
+	a.previewMu.Lock()
+	audioPlayer := a.previewAudio
+	a.previewMu.Unlock()
+
+	if audioPlayer == nil {
+		return nil
+	}
+	return audioPlayer.Pause()
+}
+
+func (a *App) ResumePreview() error {
+	a.previewMu.Lock()
+	audioPlayer := a.previewAudio
+	a.previewMu.Unlock()
+
+	if audioPlayer == nil {
+		return fmt.Errorf("preview is not active")
+	}
+	return audioPlayer.Play()
+}
+
 func (a *App) clearPreview(controller *devices.LifxDeviceController) {
 	a.previewMu.Lock()
 	defer a.previewMu.Unlock()

@@ -1,6 +1,6 @@
 import './style.css';
 
-import { AudioDuration, ChooseAudioFile, ChooseTimelineSavePath, DiscoverDevices, Generate, SaveTimeline, StartAudioPreview, StartPreview, StopPreview, Styles } from '../wailsjs/go/main/App';
+import { AudioDuration, ChooseAudioFile, ChooseTimelineSavePath, DiscoverDevices, Generate, PausePreview, ResumePreview, SaveTimeline, StartAudioPreview, StartPreview, StopPreview, Styles } from '../wailsjs/go/main/App';
 
 type DeviceKind = 'single_zone' | 'multi_zone' | 'matrix';
 
@@ -78,6 +78,7 @@ type AppState = {
   targetTokens: string[];
   playheadMS: number;
   playing: boolean;
+  previewPaused: boolean;
   status: string;
   loading: boolean;
   previewStarting: boolean;
@@ -98,12 +99,13 @@ const state: AppState = {
   targetTokens: [],
   playheadMS: 0,
   playing: false,
+  previewPaused: false,
   status: 'Loading editor',
   loading: false,
   previewStarting: false,
   needsRegeneration: false,
   zoomPxPerSecond: 16,
-  inspectorOpen: true,
+  inspectorOpen: false,
   inspectorWidth: 306,
   sidebarOpen: true,
 };
@@ -170,8 +172,8 @@ function renderToolbar() {
         </div>
       </div>
       <div class="transport">
-        <button id="play-toggle" class="tool" ${state.previewStarting ? 'disabled' : ''}>${state.previewStarting ? 'Starting...' : state.playing ? 'Pause' : 'Play'}</button>
-        <button id="stop" class="tool" ${state.previewStarting ? 'disabled' : ''}>Stop</button>
+        <button id="play-toggle" class="tool transport-button" ${state.previewStarting || !selectedSongPath() ? 'disabled' : ''}>${state.previewStarting ? 'Starting' : state.playing ? 'Pause' : 'Play'}</button>
+        <button id="stop" class="tool transport-button" ${state.previewStarting || !selectedSongPath() ? 'disabled' : ''}>Stop</button>
         <div class="timecode">${formatTime(state.playheadMS)} / ${formatTime(session ? playbackDurationMS(session) : 0)}</div>
       </div>
       <div class="actions">
@@ -208,7 +210,7 @@ function renderOverlay() {
 
 function renderTargets() {
   if (!state.sidebarOpen) {
-    return `<aside class="sidebar collapsed"><button id="toggle-sidebar" class="tool">Targets</button></aside>`;
+    return `<aside class="sidebar collapsed"><button id="toggle-sidebar" class="panel-toggle" title="Show targets">›</button></aside>`;
   }
   const session = state.session;
   const devices = session?.devices ?? state.devices;
@@ -236,8 +238,8 @@ function renderTargets() {
           <div class="sidebar-note">${devices.length > 0 ? 'Discovered devices' : 'No devices discovered'}</div>
         </div>
         <div class="sidebar-actions">
-          <button id="toggle-sidebar" class="icon-tool">Hide</button>
-          <button id="discover-devices" class="icon-tool" ${state.loading ? 'disabled' : ''}>Refresh</button>
+          <button id="discover-devices" class="icon-tool" ${state.loading ? 'disabled' : ''} title="Refresh devices">↻</button>
+          <button id="toggle-sidebar" class="panel-toggle" title="Hide targets">‹</button>
         </div>
       </div>
       <button class="device ${targetIncludes('all') ? 'selected' : ''}" data-target-token="all">
@@ -250,7 +252,7 @@ function renderTargets() {
       </button>
       ${renderTokenGroup('Groups', groups)}
       ${renderTokenGroup('Locations', locations)}
-      <div class="panel-title device-title">Devices</div>
+      <div class="token-title device-title">Devices</div>
       ${deviceItems}
     </aside>
   `;
@@ -418,14 +420,14 @@ function renderInspector() {
   const session = state.session;
   const event = selectedEvent();
   if (!state.inspectorOpen) {
-    return `<aside class="inspector collapsed"><button id="toggle-inspector" class="tool">Inspector</button></aside>`;
+    return `<aside class="inspector collapsed"><button id="toggle-inspector" class="panel-toggle" title="Show editor">‹</button></aside>`;
   }
   if (!session || !event) {
     return `
       <aside class="inspector">
         <div class="inspector-head">
-          <div class="panel-title">Inspector</div>
-          <button id="toggle-inspector" class="icon-tool">Hide</button>
+          <div class="panel-title">Editor</div>
+          <button id="toggle-inspector" class="panel-toggle" title="Hide editor">›</button>
         </div>
         <div id="inspector-resize" class="resize-handle"></div>
         <div class="empty-copy">Select a timeline event to edit timing, target, color, brightness, or transition duration.</div>
@@ -442,8 +444,8 @@ function renderInspector() {
   return `
     <aside class="inspector">
       <div class="inspector-head">
-        <div class="panel-title">Inspector</div>
-        <button id="toggle-inspector" class="icon-tool">Hide</button>
+        <div class="panel-title">Editor</div>
+        <button id="toggle-inspector" class="panel-toggle" title="Hide editor">›</button>
       </div>
       <div id="inspector-resize" class="resize-handle"></div>
       <div class="swatch" style="background:${hsla(hue, saturation, brightness)}"></div>
@@ -505,8 +507,14 @@ function bindEvents() {
     markRegenerationRequired('Target changed; regenerate to update device actions');
     render();
   });
-  document.querySelector('#play-toggle')?.addEventListener('click', () => void togglePlayback());
-  document.querySelector('#stop')?.addEventListener('click', () => stopPlayback());
+  document.querySelector('#play-toggle')?.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    void togglePlayback();
+  });
+  document.querySelector('#stop')?.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    stopPlayback();
+  });
   document.querySelector('#zoom-out')?.addEventListener('click', () => setZoom(state.zoomPxPerSecond - 4));
   document.querySelector('#zoom-in')?.addEventListener('click', () => setZoom(state.zoomPxPerSecond + 4));
   document.querySelector('#timeline-zoom')?.addEventListener('input', (event) => {
@@ -725,7 +733,11 @@ async function togglePlayback() {
     return;
   }
   if (state.playing) {
-    pausePlayback();
+    await pausePlayback();
+    return;
+  }
+  if (state.previewPaused) {
+    await resumePlayback();
     return;
   }
 
@@ -738,6 +750,7 @@ async function togglePlayback() {
     return;
   }
   state.playing = true;
+  state.previewPaused = false;
   state.previewStarting = true;
   state.status = generated ? 'Starting audio and lights' : 'Starting audio preview';
   render();
@@ -750,6 +763,7 @@ async function togglePlayback() {
       } as any);
     } catch (error) {
       state.playing = false;
+      state.previewPaused = false;
       state.previewStarting = false;
       state.status = readableError(error);
       render();
@@ -760,6 +774,7 @@ async function togglePlayback() {
       await StartAudioPreview(selectedSongPath());
     } catch (error) {
       state.playing = false;
+      state.previewPaused = false;
       state.previewStarting = false;
       state.status = readableError(error);
       render();
@@ -769,28 +784,13 @@ async function togglePlayback() {
   state.previewStarting = false;
   state.status = generated ? 'Playing generated audio and lights' : 'Previewing selected audio';
 
-  if (playTimer !== undefined) {
-    window.clearInterval(playTimer);
-  }
-  playbackStartedAt = performance.now() - state.playheadMS;
-  playTimer = window.setInterval(() => {
-    if (!state.playing) {
-      return;
-    }
-    const durationMS = playbackDurationMS(session);
-    const elapsed = performance.now() - playbackStartedAt;
-    state.playheadMS = durationMS > 0 ? Math.min(elapsed, durationMS) : elapsed;
-    if (durationMS > 0 && state.playheadMS >= durationMS) {
-      stopPlayback();
-      return;
-    }
-    updateTransport();
-  }, 50);
+  startPlaybackTimer(session);
   render();
 }
 
 function stopPlayback(shouldRender = true) {
   state.playing = false;
+  state.previewPaused = false;
   state.previewStarting = false;
   state.playheadMS = 0;
   if (playTimer !== undefined) {
@@ -808,17 +808,70 @@ function stopPlayback(shouldRender = true) {
   }
 }
 
-function pausePlayback() {
+async function pausePlayback() {
   state.playing = false;
+  state.previewPaused = true;
   state.previewStarting = false;
   if (playTimer !== undefined) {
     window.clearInterval(playTimer);
     playTimer = undefined;
   }
   audioElement?.pause();
-  void StopPreview();
-  state.status = 'Preview paused';
+  state.status = 'Pausing preview';
   updateTransport();
+  try {
+    await PausePreview();
+    state.status = 'Preview paused';
+  } catch (error) {
+    state.previewPaused = false;
+    state.status = readableError(error);
+  }
+  updateTransport();
+}
+
+async function resumePlayback() {
+  state.playing = true;
+  state.status = 'Resuming preview';
+  updateTransport();
+  try {
+    await ResumePreview();
+  } catch (error) {
+    state.playing = false;
+    state.previewPaused = false;
+    state.previewStarting = false;
+    state.status = readableError(error);
+    render();
+    return;
+  }
+  audioElement?.play().catch(() => undefined);
+  state.previewPaused = false;
+  state.previewStarting = false;
+  const session = state.session;
+  state.status = session && isGeneratedTimeline(session) ? 'Playing generated audio and lights' : 'Previewing selected audio';
+  if (session) {
+    startPlaybackTimer(session);
+  }
+  updateTransport();
+}
+
+function startPlaybackTimer(session: EditorSession) {
+  if (playTimer !== undefined) {
+    window.clearInterval(playTimer);
+  }
+  playbackStartedAt = performance.now() - state.playheadMS;
+  playTimer = window.setInterval(() => {
+    if (!state.playing) {
+      return;
+    }
+    const durationMS = playbackDurationMS(session);
+    const elapsed = performance.now() - playbackStartedAt;
+    state.playheadMS = durationMS > 0 ? Math.min(elapsed, durationMS) : elapsed;
+    if (durationMS > 0 && state.playheadMS >= durationMS) {
+      stopPlayback();
+      return;
+    }
+    updateTransport();
+  }, 50);
 }
 
 function ensureAudioElement() {
@@ -848,7 +901,7 @@ function ensureAudioElement() {
 function updateTransport() {
   const playButton = document.querySelector<HTMLButtonElement>('#play-toggle');
   if (playButton) {
-    playButton.textContent = state.playing ? 'Pause' : 'Play';
+    playButton.textContent = state.previewStarting ? 'Starting' : state.playing ? 'Pause' : 'Play';
   }
   const timecode = document.querySelector<HTMLElement>('.timecode');
   if (timecode) {

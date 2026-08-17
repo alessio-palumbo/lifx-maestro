@@ -22,6 +22,14 @@ export function Generate(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['Generate'](arg1, arg2, arg3, arg4);
 }
 
+export function PausePreview() {
+  return window['go']['main']['App']['PausePreview']();
+}
+
+export function ResumePreview() {
+  return window['go']['main']['App']['ResumePreview']();
+}
+
 export function SaveTimeline(arg1) {
   return window['go']['main']['App']['SaveTimeline'](arg1);
 }

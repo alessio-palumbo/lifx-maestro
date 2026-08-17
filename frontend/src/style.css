@@ -90,6 +90,10 @@ button {
   gap: 10px;
 }
 
+.transport {
+  min-width: 0;
+}
+
 .actions {
   justify-content: flex-end;
 }
@@ -130,14 +134,22 @@ button {
   opacity: 0.45;
 }
 
+.transport-button {
+  width: 78px;
+  padding: 0;
+  text-align: center;
+}
+
 .timecode {
-  min-width: 170px;
+  width: 218px;
   padding: 7px 10px;
   border: 1px solid #303743;
   border-radius: 7px;
   color: #c7d0dd;
   background: #15191f;
   font-variant-numeric: tabular-nums;
+  text-align: center;
+  white-space: nowrap;
 }
 
 .field {
@@ -213,18 +225,12 @@ button {
 }
 
 .sidebar.collapsed {
+  position: relative;
   display: flex;
-  align-items: flex-start;
   justify-content: center;
+  align-items: flex-start;
   padding: 10px 4px;
   overflow: hidden;
-}
-
-.sidebar.collapsed .tool {
-  width: 34px;
-  height: 84px;
-  padding: 0;
-  writing-mode: vertical-rl;
 }
 
 .inspector {
@@ -233,18 +239,12 @@ button {
 }
 
 .inspector.collapsed {
+  position: relative;
   display: flex;
-  align-items: flex-start;
   justify-content: center;
+  align-items: flex-start;
   padding: 10px 4px;
   overflow: hidden;
-}
-
-.inspector.collapsed .tool {
-  width: 34px;
-  height: 96px;
-  padding: 0;
-  writing-mode: vertical-rl;
 }
 
 .panel-title {
@@ -265,7 +265,36 @@ button {
 
 .sidebar-actions {
   display: flex;
+  align-items: center;
   gap: 6px;
+}
+
+.sidebar-head .panel-title,
+.inspector-head .panel-title {
+  margin-bottom: 0;
+}
+
+.panel-toggle {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid #303743;
+  border-radius: 6px;
+  color: #9aa5b5;
+  background: #1c222b;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.panel-toggle:hover {
+  border-color: #465163;
+  color: #dce5f2;
+  background: #222936;
+}
+
+.sidebar.collapsed .panel-toggle,
+.inspector.collapsed .panel-toggle {
+  margin-top: 2px;
 }
 
 .sidebar-note {
@@ -369,28 +398,12 @@ button {
   font-size: 11px;
 }
 
-.sidebar-footer {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-top: 16px;
-}
-
-.metric {
-  padding: 10px;
-  border: 1px solid #2d3440;
-  border-radius: 8px;
-  background: #12161c;
-}
-
-.metric span,
 .summary-grid span {
   display: block;
   color: #8d98a8;
   font-size: 11px;
 }
 
-.metric strong,
 .summary-grid strong {
   display: block;
   margin-top: 4px;

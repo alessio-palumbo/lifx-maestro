@@ -12,6 +12,10 @@ export function DiscoverDevices():Promise<Array<main.EditorDevice>>;
 
 export function Generate(arg1:string,arg2:string,arg3:string,arg4:Array<main.EditorDevice>):Promise<main.EditorSession>;
 
+export function PausePreview():Promise<void>;
+
+export function ResumePreview():Promise<void>;
+
 export function SaveTimeline(arg1:main.SaveTimelineRequest):Promise<void>;
 
 export function StartAudioPreview(arg1:string):Promise<void>;
