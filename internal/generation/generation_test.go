@@ -189,6 +189,68 @@ func TestGenerateAddsSectionTransitionAccents(t *testing.T) {
 	}
 }
 
+func TestGenerateDoesNotOverlapTransitionsForSameTargetAction(t *testing.T) {
+	tl, err := Generate(analysis.SongAnalysis{
+		DurationMS: 30000,
+		BPM:        120,
+		Beats:      beatsEvery(0, 30000, 500),
+		Energy: []analysis.EnergyPoint{
+			{TimeMS: 0, Value: 0.35},
+			{TimeMS: 12000, Value: 0.8},
+			{TimeMS: 22000, Value: 0.25},
+		},
+		Sections: []analysis.Section{
+			{StartMS: 0, EndMS: 10000, Type: "intro", Energy: 0.3},
+			{StartMS: 10000, EndMS: 22000, Type: "drop", Energy: 0.85},
+			{StartMS: 22000, EndMS: 30000, Type: "outro", Energy: 0.2},
+		},
+	}, Options{
+		Name:   "song",
+		Target: "all",
+		Devices: []devices.DeviceInfo{
+			{ID: "desk", Capabilities: devices.DeviceCapabilities{Kind: devices.DeviceKindSingleZone, HasColor: true, HasKelvin: true}},
+			{ID: "strip", Capabilities: devices.DeviceCapabilities{Kind: devices.DeviceKindMultiZone, HasColor: true, HasKelvin: true, ZoneCount: 8}},
+			{ID: "tile", Capabilities: devices.DeviceCapabilities{Kind: devices.DeviceKindMatrix, HasColor: true, HasKelvin: true, MatrixWidth: 4, MatrixHeight: 4}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if hasTransitionOverlap(tl.Events) {
+		t.Fatal("generated timeline has overlapping transitions for the same target/action")
+	}
+}
+
+func TestNormalizeTimelineEventsCapsOverlappingTransition(t *testing.T) {
+	events := normalizeTimelineEvents([]timeline.Event{
+		setColorEvent(1000, "desk", 5000),
+		setColorEvent(2000, "desk", 1000),
+	})
+
+	if len(events) != 2 {
+		t.Fatalf("events = %d, want 2", len(events))
+	}
+	params := setColorParams(t, events[0])
+	if params.DurationMS == nil || *params.DurationMS != 1000 {
+		t.Fatalf("first duration = %v, want 1000", params.DurationMS)
+	}
+}
+
+func TestNormalizeTimelineEventsDropsZeroLengthTransition(t *testing.T) {
+	events := normalizeTimelineEvents([]timeline.Event{
+		setColorEvent(1000, "desk", 5000),
+		setColorEvent(1000, "desk", 1000),
+	})
+
+	if len(events) != 1 {
+		t.Fatalf("events = %d, want 1", len(events))
+	}
+	if events[0].TimeMS != 1000 {
+		t.Fatalf("event time = %d, want 1000", events[0].TimeMS)
+	}
+}
+
 func hasSetColorEvent(events []timeline.Event) bool {
 	for _, event := range events {
 		if event.Action == "set_color" {
@@ -196,6 +258,25 @@ func hasSetColorEvent(events []timeline.Event) bool {
 		}
 	}
 	return false
+}
+
+func setColorEvent(timeMS int64, target string, durationMS int64) timeline.Event {
+	hue := 240.0
+	saturation := 100.0
+	brightness := 80.0
+	kelvin := 3500
+	return timeline.Event{
+		TimeMS: timeMS,
+		Target: target,
+		Action: "set_color",
+		Params: timeline.MustParams(timeline.SetColorParams{
+			Hue:        &hue,
+			Saturation: &saturation,
+			Brightness: &brightness,
+			Kelvin:     &kelvin,
+			DurationMS: &durationMS,
+		}),
+	}
 }
 
 func hasAction(events []timeline.Event, action string) bool {

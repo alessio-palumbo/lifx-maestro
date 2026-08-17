@@ -68,6 +68,7 @@ func Generate(song analysis.SongAnalysis, options Options) (*timeline.Timeline, 
 	}
 
 	tl.SortEvents()
+	tl.Events = normalizeTimelineEvents(tl.Events)
 	return tl, nil
 }
 
