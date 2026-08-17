@@ -27,6 +27,8 @@ type App struct {
 	previewStop  context.CancelFunc
 	previewAudio *audio.BeepPlayer
 	previewLifx  *devices.LifxDeviceController
+	lifxMu       sync.Mutex
+	lifx         *devices.LifxDeviceController
 }
 
 type EditorSession struct {
@@ -99,6 +101,22 @@ func NewApp() *App {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	go func() {
+		_, _ = a.lifxController()
+	}()
+}
+
+func (a *App) shutdown(ctx context.Context) {
+	a.StopPreview()
+
+	a.lifxMu.Lock()
+	controller := a.lifx
+	a.lifx = nil
+	a.lifxMu.Unlock()
+
+	if controller != nil {
+		_ = controller.Close()
+	}
 }
 
 func (a *App) Styles() []string {
@@ -106,11 +124,10 @@ func (a *App) Styles() []string {
 }
 
 func (a *App) DiscoverDevices() ([]EditorDevice, error) {
-	controller, err := devices.NewLifxDeviceController()
+	controller, err := a.lifxController()
 	if err != nil {
 		return nil, err
 	}
-	defer controller.Close()
 
 	infos, err := controller.Devices()
 	if err != nil {
@@ -224,7 +241,7 @@ func (a *App) StartPreview(request PreviewRequest) error {
 
 	a.StopPreview()
 
-	controller, err := devices.NewLifxDeviceController()
+	controller, err := a.lifxController()
 	if err != nil {
 		return err
 	}
@@ -233,7 +250,6 @@ func (a *App) StartPreview(request PreviewRequest) error {
 	audioPlayer, err := audio.NewBeepPlayer(request.AudioPath)
 	if err != nil {
 		restore()
-		controller.Close()
 		return err
 	}
 
@@ -248,7 +264,6 @@ func (a *App) StartPreview(request PreviewRequest) error {
 
 	go func() {
 		defer restore()
-		defer controller.Close()
 		defer audioPlayer.Stop()
 		defer a.clearPreview(controller)
 		_ = lightingPlayer.PlayWithClock(ctx, tl, audioPlayer)
@@ -348,6 +363,22 @@ func (a *App) clearPreview(controller *devices.LifxDeviceController) {
 		a.previewAudio = nil
 		a.previewLifx = nil
 	}
+}
+
+func (a *App) lifxController() (*devices.LifxDeviceController, error) {
+	a.lifxMu.Lock()
+	defer a.lifxMu.Unlock()
+
+	if a.lifx != nil {
+		return a.lifx, nil
+	}
+
+	controller, err := devices.NewLifxDeviceController()
+	if err != nil {
+		return nil, err
+	}
+	a.lifx = controller
+	return controller, nil
 }
 
 func buildEditorSession(songPath string, songName string, style string, target string, source string, song analysis.SongAnalysis) (*EditorSession, error) {

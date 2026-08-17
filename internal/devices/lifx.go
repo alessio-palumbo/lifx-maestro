@@ -3,6 +3,7 @@ package devices
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/alessio-palumbo/lifxlan-go/pkg/controller"
@@ -17,6 +18,8 @@ const (
 	matrixStateWaitTimeout  = 3 * time.Second
 	matrixStatePollDelay    = 250 * time.Millisecond
 	stateCaptureRestoreFade = 500 * time.Millisecond
+	stateRestoreAttempts    = 2
+	stateRestoreRetryDelay  = 120 * time.Millisecond
 )
 
 type LifxDeviceController struct {
@@ -31,7 +34,7 @@ type stateSnapshot struct {
 	zones        []packets.LightHsbk
 	matrixChains [][]packets.LightHsbk
 	matrixWidth  int
-	matrix       bool
+	kind         DeviceKind
 }
 
 func NewLifxDeviceController() (*LifxDeviceController, error) {
@@ -166,7 +169,7 @@ func (l *LifxDeviceController) CaptureState(target string) error {
 			zones:        cloneHSBKs(device.MultizoneProperties.Zones),
 			matrixChains: cloneMatrixChains(device.MatrixProperties.ChainZones),
 			matrixWidth:  device.MatrixProperties.Width,
-			matrix:       device.LightType == lifxdevice.LightTypeMatrix,
+			kind:         deviceKindFromDevice(device),
 		})
 	}
 	if len(snapshots) == 0 {
@@ -182,44 +185,85 @@ func (l *LifxDeviceController) RestoreState() error {
 		return nil
 	}
 
-	var restoreErr error
+	var wg sync.WaitGroup
+	errs := make(chan error, len(l.snapshots))
 	for _, snapshot := range l.snapshots {
-		target := snapshot.serial.String()
-		if !snapshot.matrix {
-			if err := l.SetColor(target, ColorParams{
-				Hue:        snapshot.color.Hue,
-				Saturation: snapshot.color.Saturation,
-				Brightness: snapshot.color.Brightness,
-				Kelvin:     int(snapshot.color.Kelvin),
-				DurationMS: stateCaptureRestoreFade.Milliseconds(),
-			}); err != nil && restoreErr == nil {
-				restoreErr = err
+		snapshot := snapshot
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := l.restoreSnapshot(snapshot); err != nil {
+				errs <- err
 			}
-		}
+		}()
+	}
+	wg.Wait()
+	close(errs)
 
-		if len(snapshot.zones) > 0 {
-			if err := l.restoreZoneColors(snapshot.serial, snapshot.zones, stateCaptureRestoreFade); err != nil && restoreErr == nil {
-				restoreErr = err
-			}
-		}
-
-		if len(snapshot.matrixChains) > 0 {
-			if err := l.restoreMatrixColors(snapshot.serial, snapshot.matrixWidth, snapshot.matrixChains, stateCaptureRestoreFade); err != nil && restoreErr == nil {
-				restoreErr = err
-			}
-		}
-
-		var err error
-		if snapshot.poweredOn {
-			err = l.PowerOn(target)
-		} else {
-			err = l.PowerOff(target)
-		}
-		if err != nil && restoreErr == nil {
+	var restoreErr error
+	for err := range errs {
+		if restoreErr == nil {
 			restoreErr = err
 		}
 	}
 	return restoreErr
+}
+
+func (l *LifxDeviceController) restoreSnapshot(snapshot stateSnapshot) error {
+	if err := repeatRestore(func() error {
+		return l.restoreSnapshotColors(snapshot)
+	}); err != nil {
+		return err
+	}
+
+	return repeatRestore(func() error {
+		return l.restoreSnapshotPower(snapshot)
+	})
+}
+
+func (l *LifxDeviceController) restoreSnapshotColors(snapshot stateSnapshot) error {
+	switch snapshot.kind {
+	case DeviceKindMatrix:
+		if len(snapshot.matrixChains) > 0 {
+			return l.restoreMatrixColors(snapshot.serial, snapshot.matrixWidth, snapshot.matrixChains, stateCaptureRestoreFade)
+		}
+	case DeviceKindMultiZone:
+		if len(snapshot.zones) > 0 {
+			return l.restoreZoneColors(snapshot.serial, snapshot.zones, stateCaptureRestoreFade)
+		}
+	}
+
+	return l.restoreSingleColor(snapshot.serial, ColorParams{
+		Hue:        snapshot.color.Hue,
+		Saturation: snapshot.color.Saturation,
+		Brightness: snapshot.color.Brightness,
+		Kelvin:     int(snapshot.color.Kelvin),
+		DurationMS: stateCaptureRestoreFade.Milliseconds(),
+	})
+}
+
+func (l *LifxDeviceController) restoreSnapshotPower(snapshot stateSnapshot) error {
+	if snapshot.poweredOn {
+		return l.controller.Send(snapshot.serial, messages.SetPowerOn())
+	}
+	return l.controller.Send(snapshot.serial, messages.SetPowerOff())
+}
+
+func (l *LifxDeviceController) restoreSingleColor(serial lifxdevice.Serial, params ColorParams) error {
+	hue := params.Hue
+	saturation := normalizePercent(params.Saturation)
+	brightness := normalizePercent(params.Brightness)
+	kelvin := uint16(params.Kelvin)
+	duration := time.Duration(params.DurationMS) * time.Millisecond
+
+	return l.controller.Send(serial, messages.SetColor(
+		&hue,
+		&saturation,
+		&brightness,
+		&kelvin,
+		duration,
+		0,
+	))
 }
 
 func (l *LifxDeviceController) restoreZoneColors(serial lifxdevice.Serial, zones []packets.LightHsbk, duration time.Duration) error {
@@ -244,6 +288,19 @@ func (l *LifxDeviceController) restoreMatrixColors(serial lifxdevice.Serial, wid
 		}
 	}
 	return nil
+}
+
+func repeatRestore(fn func() error) error {
+	var restoreErr error
+	for attempt := 0; attempt < stateRestoreAttempts; attempt++ {
+		if err := fn(); err != nil {
+			restoreErr = err
+		}
+		if attempt < stateRestoreAttempts-1 {
+			time.Sleep(stateRestoreRetryDelay)
+		}
+	}
+	return restoreErr
 }
 
 func (l *LifxDeviceController) Devices() ([]DeviceInfo, error) {
@@ -561,7 +618,7 @@ func matrixDeviceStateReady(device lifxdevice.Device) bool {
 		return false
 	}
 	for _, colors := range device.MatrixProperties.ChainZones[:length] {
-		if !hasVisibleHSBK(colors) {
+		if len(colors) == 0 {
 			return false
 		}
 	}
@@ -569,7 +626,7 @@ func matrixDeviceStateReady(device lifxdevice.Device) bool {
 }
 
 func cloneHSBKs(colors []packets.LightHsbk) []packets.LightHsbk {
-	if !hasVisibleHSBK(colors) {
+	if len(colors) == 0 {
 		return nil
 	}
 	return append([]packets.LightHsbk(nil), colors...)
@@ -582,7 +639,7 @@ func cloneMatrixChains(chains [][]packets.LightHsbk) [][]packets.LightHsbk {
 	cloned := make([][]packets.LightHsbk, len(chains))
 	hasState := false
 	for i, colors := range chains {
-		if hasVisibleHSBK(colors) {
+		if len(colors) > 0 {
 			cloned[i] = append([]packets.LightHsbk(nil), colors...)
 			hasState = true
 		}
@@ -591,15 +648,6 @@ func cloneMatrixChains(chains [][]packets.LightHsbk) [][]packets.LightHsbk {
 		return nil
 	}
 	return cloned
-}
-
-func hasVisibleHSBK(colors []packets.LightHsbk) bool {
-	for _, color := range colors {
-		if color.Hue != 0 || color.Saturation != 0 || color.Brightness != 0 || color.Kelvin != 0 {
-			return true
-		}
-	}
-	return false
 }
 
 func matrixRestoreWidth(width, colorCount int) int {

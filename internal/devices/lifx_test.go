@@ -149,14 +149,14 @@ func TestCloneMatrixChainsDeepCopiesColors(t *testing.T) {
 	}
 }
 
-func TestCloneSpatialStateSkipsZeroBuffers(t *testing.T) {
+func TestCloneSpatialStatePreservesZeroBuffers(t *testing.T) {
 	zeroColors := []packets.LightHsbk{{}, {}}
 
-	if got := cloneHSBKs(zeroColors); got != nil {
-		t.Fatalf("cloneHSBKs zero buffer = %#v, want nil", got)
+	if got := cloneHSBKs(zeroColors); len(got) != len(zeroColors) {
+		t.Fatalf("cloneHSBKs zero buffer len = %d, want %d", len(got), len(zeroColors))
 	}
-	if got := cloneMatrixChains([][]packets.LightHsbk{zeroColors}); got != nil {
-		t.Fatalf("cloneMatrixChains zero buffer = %#v, want nil", got)
+	if got := cloneMatrixChains([][]packets.LightHsbk{zeroColors}); len(got) != 1 || len(got[0]) != len(zeroColors) {
+		t.Fatalf("cloneMatrixChains zero buffer = %#v, want preserved chain", got)
 	}
 }
 
@@ -172,7 +172,7 @@ func TestMatrixRestoreWidth(t *testing.T) {
 	}
 }
 
-func TestMatrixStateReadyRequiresPoweredOnMatrixColors(t *testing.T) {
+func TestMatrixStateReadyRequiresPoweredOnMatrixBuffers(t *testing.T) {
 	serial, err := lifxdevice.SerialFromHex("001122334455")
 	if err != nil {
 		t.Fatal(err)
@@ -186,15 +186,14 @@ func TestMatrixStateReadyRequiresPoweredOnMatrixColors(t *testing.T) {
 	device.MatrixProperties.Width = 8
 	device.MatrixProperties.Height = 8
 	device.MatrixProperties.ChainLength = 1
-	device.MatrixProperties.ChainZones = [][]packets.LightHsbk{{{}, {}}}
 
 	if matrixStateReady(selected, []lifxdevice.Device{device}) {
-		t.Fatal("matrix state should not be ready with only zero colors")
+		t.Fatal("matrix state should not be ready without chain colors")
 	}
 
-	device.MatrixProperties.ChainZones[0][0] = packets.LightHsbk{Hue: 1, Brightness: 1, Kelvin: 3500}
+	device.MatrixProperties.ChainZones = [][]packets.LightHsbk{{{}, {}}}
 	if !matrixStateReady(selected, []lifxdevice.Device{device}) {
-		t.Fatal("matrix state should be ready with visible colors")
+		t.Fatal("matrix state should be ready with captured chain colors, even when empty")
 	}
 }
 
@@ -219,11 +218,11 @@ func TestMatrixStateReadyIgnoresPoweredOffMatrix(t *testing.T) {
 func TestMatrixSnapshotIdentifiesMatrixDevice(t *testing.T) {
 	device := lifxdevice.Device{LightType: lifxdevice.LightTypeMatrix}
 	snapshot := stateSnapshot{
-		matrix: device.LightType == lifxdevice.LightTypeMatrix,
+		kind: deviceKindFromDevice(device),
 	}
 
-	if !snapshot.matrix {
-		t.Fatal("matrix snapshot should be marked as matrix")
+	if snapshot.kind != DeviceKindMatrix {
+		t.Fatalf("snapshot kind = %q, want %q", snapshot.kind, DeviceKindMatrix)
 	}
 }
 
