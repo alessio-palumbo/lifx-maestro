@@ -401,7 +401,7 @@ func hsbk(hue, saturation, brightness float64, kelvin int) packets.LightHsbk {
 
 func deviceCapabilities(device lifxdevice.Device) DeviceCapabilities {
 	surface := lifxdevice.SurfaceFromDevice(device)
-	kind := deviceKindFromLightType(device.LightType)
+	kind := deviceKindFromDevice(device)
 
 	return DeviceCapabilities{
 		Kind:         kind,
@@ -413,6 +413,13 @@ func deviceCapabilities(device lifxdevice.Device) DeviceCapabilities {
 		MatrixLength: matrixLengthFromSurface(surface, device.MatrixProperties.ChainLength),
 		Surface:      surface,
 	}
+}
+
+func deviceKindFromDevice(device lifxdevice.Device) DeviceKind {
+	if device.Type == lifxdevice.DeviceTypeSwitch {
+		return DeviceKindSwitch
+	}
+	return deviceKindFromLightType(device.LightType)
 }
 
 func deviceKindFromLightType(lightType lifxdevice.LightType) DeviceKind {
@@ -428,7 +435,7 @@ func deviceKindFromLightType(lightType lifxdevice.LightType) DeviceKind {
 
 func zoneCount(device lifxdevice.Device) int {
 	return zoneCountFromDevice(
-		deviceKindFromLightType(device.LightType),
+		deviceKindFromDevice(device),
 		device,
 		lifxdevice.SurfaceFromDevice(device),
 	)

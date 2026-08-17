@@ -85,6 +85,8 @@ type EditorDevice struct {
 
 type EditorDeviceCapabilities struct {
 	Kind         devices.DeviceKind `json:"kind"`
+	HasColor     bool               `json:"has_color"`
+	HasKelvin    bool               `json:"has_kelvin"`
 	ZoneCount    int                `json:"zone_count"`
 	MatrixWidth  int                `json:"matrix_width"`
 	MatrixHeight int                `json:"matrix_height"`
@@ -444,6 +446,9 @@ func setupWailsStateRestore(controller devices.DeviceController, target string) 
 func editorDevicesFromInfos(infos []devices.DeviceInfo) []EditorDevice {
 	result := make([]EditorDevice, 0, len(infos))
 	for _, info := range infos {
+		if info.Capabilities.Kind == devices.DeviceKindSwitch || !info.Capabilities.HasColor {
+			continue
+		}
 		result = append(result, EditorDevice{
 			ID:       info.ID,
 			Label:    info.Label,
@@ -451,6 +456,8 @@ func editorDevicesFromInfos(infos []devices.DeviceInfo) []EditorDevice {
 			Location: info.Location,
 			Capabilities: EditorDeviceCapabilities{
 				Kind:         info.Capabilities.Kind,
+				HasColor:     info.Capabilities.HasColor,
+				HasKelvin:    info.Capabilities.HasKelvin,
 				ZoneCount:    info.Capabilities.ZoneCount,
 				MatrixWidth:  info.Capabilities.MatrixWidth,
 				MatrixHeight: info.Capabilities.MatrixHeight,
@@ -478,8 +485,8 @@ func editorDeviceInfosFromEditor(editorDevices []EditorDevice) []devices.DeviceI
 				MatrixWidth:  device.Capabilities.MatrixWidth,
 				MatrixHeight: device.Capabilities.MatrixHeight,
 				MatrixLength: device.Capabilities.MatrixLength,
-				HasColor:     true,
-				HasKelvin:    true,
+				HasColor:     device.Capabilities.HasColor,
+				HasKelvin:    device.Capabilities.HasKelvin,
 			},
 		})
 	}

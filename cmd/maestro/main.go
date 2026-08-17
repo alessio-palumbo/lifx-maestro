@@ -355,6 +355,8 @@ func capabilitySummary(capabilities devices.DeviceCapabilities) string {
 			return fmt.Sprintf("%dx%d x%d", capabilities.MatrixWidth, capabilities.MatrixHeight, capabilities.MatrixLength)
 		}
 		return fmt.Sprintf("%dx%d", capabilities.MatrixWidth, capabilities.MatrixHeight)
+	case devices.DeviceKindSwitch:
+		return "switch"
 	default:
 		if capabilities.HasColor {
 			return "color"

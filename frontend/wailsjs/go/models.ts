@@ -77,6 +77,8 @@ export namespace main {
 	
 	export class EditorDeviceCapabilities {
 	    kind: string;
+	    has_color: boolean;
+	    has_kelvin: boolean;
 	    zone_count: number;
 	    matrix_width: number;
 	    matrix_height: number;
@@ -89,6 +91,8 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.kind = source["kind"];
+	        this.has_color = source["has_color"];
+	        this.has_kelvin = source["has_kelvin"];
 	        this.zone_count = source["zone_count"];
 	        this.matrix_width = source["matrix_width"];
 	        this.matrix_height = source["matrix_height"];

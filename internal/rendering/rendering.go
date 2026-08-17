@@ -54,8 +54,10 @@ func Render(intent EffectIntent, device devices.DeviceInfo) []timeline.Event {
 		return MultiZoneRenderer{}.Render(intent, device)
 	case devices.DeviceKindMatrix:
 		return MatrixRenderer{}.Render(intent, device)
-	default:
+	case devices.DeviceKindSingleZone:
 		return SingleZoneRenderer{}.Render(intent, device)
+	default:
+		return nil
 	}
 }
 

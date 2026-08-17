@@ -102,6 +102,15 @@ func TestDeviceCapabilitiesPreserveMatrixSendDimensions(t *testing.T) {
 	}
 }
 
+func TestDeviceCapabilitiesIdentifySwitches(t *testing.T) {
+	device := lifxdevice.Device{Type: lifxdevice.DeviceTypeSwitch}
+
+	got := deviceCapabilities(device)
+	if got.Kind != DeviceKindSwitch {
+		t.Fatalf("kind = %q, want %q", got.Kind, DeviceKindSwitch)
+	}
+}
+
 func TestMatrixLengthFromSurfaceUsesLifxSurfaceChains(t *testing.T) {
 	surface := lifxdevice.Surface{
 		Width:  16,

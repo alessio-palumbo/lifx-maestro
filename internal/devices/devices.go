@@ -33,6 +33,7 @@ const (
 	DeviceKindSingleZone DeviceKind = "single_zone"
 	DeviceKindMultiZone  DeviceKind = "multi_zone"
 	DeviceKindMatrix     DeviceKind = "matrix"
+	DeviceKindSwitch     DeviceKind = "switch"
 )
 
 type DeviceCapabilities struct {
