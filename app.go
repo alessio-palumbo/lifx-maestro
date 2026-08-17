@@ -151,10 +151,38 @@ func (a *App) ChooseTimelineSavePath(defaultName string) (string, error) {
 }
 
 func (a *App) Generate(audioPath string, style string, target string, editorDevices []EditorDevice) (*EditorSession, error) {
+	result, err := a.Analyze(audioPath)
+	if err != nil {
+		return nil, err
+	}
+	return a.GenerateFromAnalysis(audioPath, result, style, target, editorDevices)
+}
+
+func (a *App) Analyze(audioPath string) (analysis.SongAnalysis, error) {
+	if strings.TrimSpace(audioPath) == "" {
+		return analysis.SongAnalysis{}, fmt.Errorf("audio path is required")
+	}
+	if err := audio.ValidateInput(audioPath); err != nil {
+		return analysis.SongAnalysis{}, err
+	}
+
+	analyzer := analysis.NewAnalyzer()
+	analyzer.PythonPath = defaultUIPythonPath()
+	result, err := analyzer.Analyze(a.ctx, audioPath)
+	if err != nil {
+		return analysis.SongAnalysis{}, err
+	}
+	return *result, nil
+}
+
+func (a *App) GenerateFromAnalysis(audioPath string, song analysis.SongAnalysis, style string, target string, editorDevices []EditorDevice) (*EditorSession, error) {
 	if strings.TrimSpace(audioPath) == "" {
 		return nil, fmt.Errorf("audio path is required")
 	}
 	if err := audio.ValidateInput(audioPath); err != nil {
+		return nil, err
+	}
+	if err := song.Validate(); err != nil {
 		return nil, err
 	}
 	if style == "" {
@@ -164,14 +192,7 @@ func (a *App) Generate(audioPath string, style string, target string, editorDevi
 		target = "all"
 	}
 
-	analyzer := analysis.NewAnalyzer()
-	analyzer.PythonPath = defaultUIPythonPath()
-	result, err := analyzer.Analyze(a.ctx, audioPath)
-	if err != nil {
-		return nil, err
-	}
-
-	return buildEditorSessionWithDevices(audioPath, filepath.Base(audioPath), style, target, "generated", *result, editorDevices)
+	return buildEditorSessionWithDevices(audioPath, filepath.Base(audioPath), style, target, "generated", song, editorDevices)
 }
 
 func (a *App) SaveTimeline(request SaveTimelineRequest) error {

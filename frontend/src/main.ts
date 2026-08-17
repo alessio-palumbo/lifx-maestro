@@ -1,6 +1,6 @@
 import './style.css';
 
-import { AudioDuration, ChooseAudioFile, ChooseTimelineSavePath, DiscoverDevices, Generate, PausePreview, ResumePreview, SaveTimeline, StartAudioPreview, StartPreview, StopPreview, Styles } from '../wailsjs/go/main/App';
+import { Analyze, AudioDuration, ChooseAudioFile, ChooseTimelineSavePath, DiscoverDevices, GenerateFromAnalysis, PausePreview, ResumePreview, SaveTimeline, StartAudioPreview, StartPreview, StopPreview, Styles } from '../wailsjs/go/main/App';
 
 type DeviceKind = 'single_zone' | 'multi_zone' | 'matrix' | 'switch';
 
@@ -85,6 +85,13 @@ type AppState = {
   loading: boolean;
   previewStarting: boolean;
   needsRegeneration: boolean;
+  regenerationReasons: {
+    style: boolean;
+    target: boolean;
+    devices: boolean;
+  };
+  regenerationPrompt: boolean;
+  generatedStyle: string;
   zoomPxPerSecond: number;
   inspectorOpen: boolean;
   inspectorWidth: number;
@@ -106,6 +113,13 @@ const state: AppState = {
   loading: false,
   previewStarting: false,
   needsRegeneration: false,
+  regenerationReasons: {
+    style: false,
+    target: false,
+    devices: false,
+  },
+  regenerationPrompt: false,
+  generatedStyle: '',
   zoomPxPerSecond: 16,
   inspectorOpen: false,
   inspectorWidth: 306,
@@ -131,7 +145,7 @@ async function bootstrap() {
     render();
     state.devices = await DiscoverDevices() as unknown as DeviceInfo[];
     state.targetTokens = ['all'];
-    state.status = `Discovered ${state.devices.length} LIFX lighting devices`;
+    state.status = `Discovered ${state.devices.length} LIFX devices`;
   } catch (error) {
     state.devices = [];
     state.targetTokens = ['all'];
@@ -170,7 +184,6 @@ function renderToolbar() {
         <div class="mark"></div>
         <div>
           <div class="product">lifx-maestro</div>
-          <div class="status">${escapeHTML(state.status)}</div>
         </div>
       </div>
       <div class="transport">
@@ -183,10 +196,6 @@ function renderToolbar() {
           <span>Style</span>
           <select id="style" class="select-control">${styleOptions}</select>
         </label>
-        <label class="field target-field">
-          <span>Target</span>
-          <input id="target" value="${escapeAttr(targetString())}" />
-        </label>
         <button id="choose-song" class="tool primary" ${state.loading ? 'disabled' : ''}>Choose Song</button>
         <button id="regenerate" class="tool ${state.needsRegeneration ? 'attention' : ''}" ${state.loading || !selectedSongPath() ? 'disabled' : ''}>${state.needsRegeneration ? 'Regenerate' : 'Generate'}</button>
         <button id="save" class="tool" ${!session ? 'disabled' : ''}>Save JSON</button>
@@ -196,6 +205,20 @@ function renderToolbar() {
 }
 
 function renderOverlay() {
+  if (state.regenerationPrompt) {
+    return `
+      <div class="busy-overlay">
+        <div class="busy-modal prompt-modal">
+          <strong>Regenerate timeline</strong>
+          <span>${escapeHTML(regenerationMessage())}</span>
+          <div class="modal-actions">
+            <button id="prompt-cancel" class="tool">Cancel</button>
+            <button id="prompt-regenerate" class="tool attention">Regenerate</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
   if (!state.loading && !state.previewStarting) {
     return '';
   }
@@ -203,7 +226,6 @@ function renderOverlay() {
     <div class="busy-overlay">
       <div class="busy-modal">
         <div class="spinner"></div>
-        <strong>${state.previewStarting ? 'Starting preview' : 'Working'}</strong>
         <span>${escapeHTML(state.status)}</span>
       </div>
     </div>
@@ -241,7 +263,7 @@ function renderTargets() {
         </div>
         <div>
           <div class="panel-title">Targets</div>
-          <div class="sidebar-note">${devices.length > 0 ? 'Discovered lighting devices' : 'No lighting devices discovered'}</div>
+          <div class="sidebar-note">${devices.length > 0 ? 'Discovered devices' : 'No devices discovered'}</div>
         </div>
       </div>
       <button class="device ${targetIncludes('all') ? 'selected' : ''}" data-target-token="all">
@@ -270,12 +292,14 @@ function renderOverview() {
     <section class="overview">
       <div>
         <h1>${escapeHTML(session.song_name)}</h1>
-        <p>${sourceLabel(session)} / ${visibleEvents} events / ${session.summary.beats} beats / ${session.summary.sections} sections</p>
+        <p>${overviewSubtitle(session)}</p>
       </div>
       <div class="summary-grid">
         <div><span>Duration</span><strong>${formatTime(session.summary.duration_ms)}</strong></div>
         <div><span>BPM</span><strong>${formatNumber(session.summary.bpm, 1)}</strong></div>
         <div><span>Events</span><strong>${visibleEvents}</strong></div>
+        <div><span>Beats</span><strong>${session.summary.beats}</strong></div>
+        <div><span>Sections</span><strong>${session.summary.sections}</strong></div>
       </div>
     </section>
   `;
@@ -506,15 +530,15 @@ function bindEvents() {
   document.querySelector('#save')?.addEventListener('click', saveTimeline);
   document.querySelector('#discover-devices')?.addEventListener('click', discoverDevices);
   document.querySelector('#style')?.addEventListener('change', () => {
-    markRegenerationRequired('Style changed; regenerate to update choreography');
+    const selectedStyle = inputValue('style', state.session?.style ?? state.styles[0] ?? 'synthwave');
+    if (state.session) {
+      state.session.style = selectedStyle;
+    }
+    handleStyleChanged(selectedStyle);
+    render();
   });
   document.querySelector('#toggle-sidebar')?.addEventListener('click', () => {
     state.sidebarOpen = !state.sidebarOpen;
-    render();
-  });
-  document.querySelector('#target')?.addEventListener('change', () => {
-    state.targetTokens = splitTarget(inputValue('target', targetString()));
-    handleTargetChanged();
     render();
   });
   document.querySelector('#play-toggle')?.addEventListener('pointerdown', (event) => {
@@ -533,6 +557,14 @@ function bindEvents() {
   document.querySelector('#toggle-inspector')?.addEventListener('click', () => {
     state.inspectorOpen = !state.inspectorOpen;
     render();
+  });
+  document.querySelector('#prompt-cancel')?.addEventListener('click', () => {
+    state.regenerationPrompt = false;
+    render();
+  });
+  document.querySelector('#prompt-regenerate')?.addEventListener('click', () => {
+    state.regenerationPrompt = false;
+    void regenerate();
   });
   bindInspectorResize();
 
@@ -649,7 +681,9 @@ async function chooseSong() {
     }
     stopPlayback(false);
     state.selectedAudioPath = path;
-    state.needsRegeneration = false;
+    clearRegenerationReasons();
+    state.regenerationPrompt = false;
+    state.generatedStyle = '';
     state.status = `Selected ${fileName(path)}; press Generate to analyze`;
     state.session = emptySession(path);
     try {
@@ -691,10 +725,10 @@ async function discoverDevices() {
     }
     syncSessionTarget();
     if (state.session?.source === 'generated') {
-      state.needsRegeneration = true;
-      state.status = `Discovered ${discovered.length} lighting devices; regenerate to update choreography`;
+      markRegenerationRequired('devices', `Discovered ${discovered.length} devices; regenerate to update choreography`);
+      state.status = `Discovered ${discovered.length} devices; regenerate to update choreography`;
     } else {
-      state.status = `Discovered ${discovered.length} LIFX lighting devices`;
+      state.status = `Discovered ${discovered.length} LIFX devices`;
     }
   } catch (error) {
     state.status = readableError(error);
@@ -706,21 +740,26 @@ async function discoverDevices() {
 
 async function generateForPath(path: string) {
   const style = inputValue('style', state.session?.style ?? 'synthwave');
-  state.targetTokens = splitTarget(inputValue('target', targetString()));
   const target = targetString();
   stopPlayback(false);
   state.loading = true;
-  state.status = 'Analyzing and generating timeline';
+  const existingAnalysis = analysisForPath(path);
+  state.status = existingAnalysis ? 'Generating timeline' : 'Analyzing song';
   render();
   try {
-    state.session = await Generate(path, style, target, (state.session?.devices ?? state.devices) as any) as unknown as EditorSession;
+    const songAnalysis = existingAnalysis ?? await Analyze(path);
+    state.status = 'Generating timeline';
+    render();
+    state.session = await GenerateFromAnalysis(path, songAnalysis as any, style, target, (state.session?.devices ?? state.devices) as any) as unknown as EditorSession;
     state.devices = state.session.devices;
     state.selectedAudioPath = path;
     state.targetTokens = splitTarget(state.session.target);
     state.selectedEvent = -1;
     state.selectedDevice = firstDeviceID(state.session);
     state.playheadMS = 0;
-    state.needsRegeneration = false;
+    clearRegenerationReasons();
+    state.generatedStyle = state.session.style;
+    state.regenerationPrompt = false;
     state.status = 'Generated editable timeline';
   } catch (error) {
     state.status = readableError(error);
@@ -766,7 +805,8 @@ async function togglePlayback() {
   if (generated && state.needsRegeneration) {
     state.playing = false;
     state.previewStarting = false;
-    state.status = 'Regenerate required before playing lights';
+    state.regenerationPrompt = true;
+    state.status = regenerationMessage();
     render();
     return;
   }
@@ -928,10 +968,6 @@ function updateTransport() {
   if (timecode) {
     timecode.textContent = `${formatTime(state.playheadMS)} / ${formatTime(state.session ? playbackDurationMS(state.session) : 0)}`;
   }
-  const status = document.querySelector<HTMLElement>('.status');
-  if (status) {
-    status.textContent = state.status;
-  }
   const playhead = document.querySelector<HTMLElement>('.playhead');
   if (playhead) {
     playhead.style.left = `${timeToX(state.playheadMS)}px`;
@@ -991,6 +1027,17 @@ function emptySession(path: string): EditorSession {
     source: 'selected',
     event_stats: {},
   };
+}
+
+function analysisForPath(path: string) {
+  const session = state.session;
+  if (!session || session.song_path !== path) {
+    return null;
+  }
+  if (session.analysis.duration_ms <= 0 || session.analysis.beats.length === 0) {
+    return null;
+  }
+  return session.analysis;
 }
 
 function mutableParams(event: TimelineEvent) {
@@ -1056,11 +1103,12 @@ function handleTargetChanged() {
     return;
   }
   if (generatedTimelineCoversSelectedTargets(session)) {
-    state.needsRegeneration = false;
+    state.regenerationReasons.target = false;
+    updateNeedsRegeneration();
     state.status = 'Target changed; existing choreography filtered to selected devices';
     return;
   }
-  markRegenerationRequired('Target changed; regenerate to create device actions');
+  markRegenerationRequired('target', 'Target changed; regenerate to create device actions');
 }
 
 function selectedTargetDevices(session: EditorSession) {
@@ -1206,12 +1254,52 @@ function syncSessionTarget() {
   }
 }
 
-function markRegenerationRequired(message: string) {
+function handleStyleChanged(selectedStyle: string) {
   if (state.session?.source !== 'generated') {
     return;
   }
-  state.needsRegeneration = true;
+  if (selectedStyle === state.generatedStyle) {
+    state.regenerationReasons.style = false;
+    updateNeedsRegeneration();
+    state.status = 'Style restored to generated timeline';
+    return;
+  }
+  markRegenerationRequired('style', 'Style changed; regenerate to update choreography');
+}
+
+function markRegenerationRequired(reason: keyof AppState['regenerationReasons'], message: string) {
+  if (state.session?.source !== 'generated') {
+    return;
+  }
+  state.regenerationReasons[reason] = true;
+  updateNeedsRegeneration();
   state.status = message;
+}
+
+function clearRegenerationReasons() {
+  state.regenerationReasons = {
+    style: false,
+    target: false,
+    devices: false,
+  };
+  updateNeedsRegeneration();
+}
+
+function updateNeedsRegeneration() {
+  state.needsRegeneration = Object.values(state.regenerationReasons).some(Boolean);
+}
+
+function regenerationMessage() {
+  if (state.regenerationReasons.style) {
+    return 'The selected style needs timeline regeneration before playing lights.';
+  }
+  if (state.regenerationReasons.target) {
+    return 'The selected target is not covered by the current timeline. Regenerate to create device actions.';
+  }
+  if (state.regenerationReasons.devices) {
+    return 'Device discovery changed. Regenerate to update the choreography.';
+  }
+  return 'Regenerate the timeline before playing lights.';
 }
 
 function sameToken(a: string, b: string) {
@@ -1232,11 +1320,11 @@ function unique(values: string[]) {
   return result;
 }
 
-function sourceLabel(session: EditorSession) {
+function overviewSubtitle(session: EditorSession) {
   if (session.source === 'selected') {
-    return 'song loaded; timeline empty';
+    return 'Song loaded; timeline empty';
   }
-  return `${escapeHTML(session.source)} choreography`;
+  return `Style: ${session.style}`;
 }
 
 function fileName(path: string) {

@@ -42,7 +42,7 @@ button {
 
 .toolbar {
   display: grid;
-  grid-template-columns: 300px 310px 1fr;
+  grid-template-columns: 210px 310px 1fr;
   gap: 18px;
   align-items: center;
   min-height: 76px;
@@ -72,15 +72,6 @@ button {
   font-size: 15px;
   font-weight: 700;
   letter-spacing: 0;
-}
-
-.status {
-  max-width: 240px;
-  overflow: hidden;
-  color: #9aa5b5;
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .transport,
@@ -454,9 +445,9 @@ button {
 
 .summary-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(94px, 1fr));
+  grid-template-columns: repeat(5, minmax(82px, 1fr));
   gap: 8px;
-  min-width: 330px;
+  min-width: 470px;
 }
 
 .busy-overlay {
@@ -471,7 +462,7 @@ button {
 .busy-modal {
   display: grid;
   justify-items: center;
-  gap: 10px;
+  gap: 12px;
   min-width: 260px;
   padding: 22px;
   border: 1px solid #384150;
@@ -485,6 +476,18 @@ button {
   max-width: 360px;
   color: #9aa5b5;
   text-align: center;
+}
+
+.prompt-modal {
+  min-width: 340px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  width: 100%;
+  margin-top: 4px;
 }
 
 .spinner {
