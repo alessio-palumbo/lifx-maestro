@@ -188,6 +188,11 @@ button {
   box-shadow: 0 0 0 2px rgba(55, 169, 202, 0.18);
 }
 
+.edit-field input[readonly] {
+  color: #c7d0dd;
+  background: #171c23;
+}
+
 .field input {
   width: 220px;
   padding: 0 10px;
@@ -229,7 +234,7 @@ button {
   display: flex;
   justify-content: center;
   align-items: flex-start;
-  padding: 10px 4px;
+  padding: 16px 4px;
   overflow: hidden;
 }
 
@@ -243,7 +248,7 @@ button {
   display: flex;
   justify-content: center;
   align-items: flex-start;
-  padding: 10px 4px;
+  padding: 16px 4px;
   overflow: hidden;
 }
 
@@ -256,22 +261,23 @@ button {
 }
 
 .sidebar-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 8px;
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 
-.sidebar-actions {
+.panel-control-row {
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
-.sidebar-head .panel-title,
-.inspector-head .panel-title {
-  margin-bottom: 0;
+.panel-control-row.left {
+  justify-content: flex-start;
+}
+
+.panel-control-row.right {
+  justify-content: flex-end;
 }
 
 .panel-toggle {
@@ -294,7 +300,15 @@ button {
 
 .sidebar.collapsed .panel-toggle,
 .inspector.collapsed .panel-toggle {
-  margin-top: 2px;
+  margin-top: 0;
+}
+
+.sidebar .panel-control-row.right {
+  margin-right: -8px;
+}
+
+.inspector .panel-control-row.left {
+  margin-left: -8px;
 }
 
 .sidebar-note {
@@ -737,11 +751,41 @@ button {
   width: 74px;
 }
 
-.swatch {
-  height: 74px;
+.color-editor {
+  display: grid;
+  grid-template-columns: 86px 1fr;
+  gap: 12px;
+  align-items: stretch;
   margin-bottom: 14px;
+}
+
+.swatch {
+  min-height: 76px;
   border: 1px solid rgba(255, 255, 255, 0.25);
   border-radius: 8px;
+}
+
+.color-readout {
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #2d3440;
+  border-radius: 8px;
+  background: #12161c;
+}
+
+.color-readout strong {
+  font-size: 16px;
+}
+
+.color-readout span {
+  overflow: hidden;
+  color: #8d98a8;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .edit-field {
@@ -761,6 +805,10 @@ button {
   padding: 0;
 }
 
+.edit-field .hue-range {
+  accent-color: #35d2ff;
+}
+
 .inspector-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -768,11 +816,30 @@ button {
   margin-top: 16px;
 }
 
+.icon-action {
+  font-size: 18px;
+}
+
 .inspector-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  display: grid;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.inspector .empty-copy {
+  margin-top: 0;
+}
+
+.edit-field input[type="number"] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.edit-field input[type="number"]::-webkit-outer-spin-button,
+.edit-field input[type="number"]::-webkit-inner-spin-button {
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
 }
 
 .resize-handle {

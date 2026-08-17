@@ -2,7 +2,7 @@ import './style.css';
 
 import { AudioDuration, ChooseAudioFile, ChooseTimelineSavePath, DiscoverDevices, Generate, PausePreview, ResumePreview, SaveTimeline, StartAudioPreview, StartPreview, StopPreview, Styles } from '../wailsjs/go/main/App';
 
-type DeviceKind = 'single_zone' | 'multi_zone' | 'matrix';
+type DeviceKind = 'single_zone' | 'multi_zone' | 'matrix' | 'switch';
 
 type DeviceInfo = {
   id: string;
@@ -11,6 +11,8 @@ type DeviceInfo = {
   location: string;
   capabilities: {
     kind: DeviceKind;
+    has_color: boolean;
+    has_kelvin: boolean;
     zone_count: number;
     matrix_width: number;
     matrix_height: number;
@@ -129,7 +131,7 @@ async function bootstrap() {
     render();
     state.devices = await DiscoverDevices() as unknown as DeviceInfo[];
     state.targetTokens = ['all'];
-    state.status = `Discovered ${state.devices.length} LIFX devices`;
+    state.status = `Discovered ${state.devices.length} LIFX lighting devices`;
   } catch (error) {
     state.devices = [];
     state.targetTokens = ['all'];
@@ -233,13 +235,13 @@ function renderTargets() {
   return `
     <aside class="sidebar">
       <div class="sidebar-head">
-        <div>
-          <div class="panel-title">Targets</div>
-          <div class="sidebar-note">${devices.length > 0 ? 'Discovered devices' : 'No devices discovered'}</div>
-        </div>
-        <div class="sidebar-actions">
+        <div class="panel-control-row right">
           <button id="discover-devices" class="icon-tool" ${state.loading ? 'disabled' : ''} title="Refresh devices">↻</button>
           <button id="toggle-sidebar" class="panel-toggle" title="Hide targets">‹</button>
+        </div>
+        <div>
+          <div class="panel-title">Targets</div>
+          <div class="sidebar-note">${devices.length > 0 ? 'Discovered lighting devices' : 'No lighting devices discovered'}</div>
         </div>
       </div>
       <button class="device ${targetIncludes('all') ? 'selected' : ''}" data-target-token="all">
@@ -263,16 +265,17 @@ function renderOverview() {
   if (!session) {
     return `<section class="overview empty">No timeline loaded</section>`;
   }
+  const visibleEvents = timelineForSelectedTargets(session).events.length;
   return `
     <section class="overview">
       <div>
         <h1>${escapeHTML(session.song_name)}</h1>
-        <p>${sourceLabel(session)} / ${session.summary.events} events / ${session.summary.beats} beats / ${session.summary.sections} sections</p>
+        <p>${sourceLabel(session)} / ${visibleEvents} events / ${session.summary.beats} beats / ${session.summary.sections} sections</p>
       </div>
       <div class="summary-grid">
         <div><span>Duration</span><strong>${formatTime(session.summary.duration_ms)}</strong></div>
         <div><span>BPM</span><strong>${formatNumber(session.summary.bpm, 1)}</strong></div>
-        <div><span>Events</span><strong>${session.summary.events}</strong></div>
+        <div><span>Events</span><strong>${visibleEvents}</strong></div>
       </div>
     </section>
   `;
@@ -426,8 +429,10 @@ function renderInspector() {
     return `
       <aside class="inspector">
         <div class="inspector-head">
+          <div class="panel-control-row left">
+            <button id="toggle-inspector" class="panel-toggle" title="Hide editor">›</button>
+          </div>
           <div class="panel-title">Editor</div>
-          <button id="toggle-inspector" class="panel-toggle" title="Hide editor">›</button>
         </div>
         <div id="inspector-resize" class="resize-handle"></div>
         <div class="empty-copy">Select a timeline event to edit timing, target, color, brightness, or transition duration.</div>
@@ -440,30 +445,36 @@ function renderInspector() {
   const brightness = Number(params.brightness ?? colorFromNested(params, 'brightness') ?? 70);
   const kelvin = Number(params.kelvin ?? colorFromNested(params, 'kelvin') ?? 3500);
   const durationMS = Number(params.duration_ms ?? 180);
+  const targetLabel = eventTargetLabel(session, event);
 
   return `
     <aside class="inspector">
       <div class="inspector-head">
+        <div class="panel-control-row left">
+          <button id="toggle-inspector" class="panel-toggle" title="Hide editor">›</button>
+        </div>
         <div class="panel-title">Editor</div>
-        <button id="toggle-inspector" class="panel-toggle" title="Hide editor">›</button>
       </div>
       <div id="inspector-resize" class="resize-handle"></div>
-      <div class="swatch" style="background:${hsla(hue, saturation, brightness)}"></div>
-      <label class="edit-field">
-        <span>Action</span>
-        <input value="${escapeAttr(event.action)}" readonly />
-      </label>
+      <div class="color-editor">
+        <div class="swatch" style="background:${eventColor(event)}"></div>
+        <div class="color-readout">
+          <strong>${Math.round(hue)}°</strong>
+          <span>${Math.round(saturation)}% sat · ${Math.round(brightness)}% bri</span>
+          <span>${Math.round(kelvin)} K</span>
+        </div>
+      </div>
       <label class="edit-field">
         <span>Target</span>
-        <input id="event-target" value="${escapeAttr(event.target)}" />
+        <input value="${escapeAttr(targetLabel)}" readonly />
       </label>
       <label class="edit-field">
-        <span>Time</span>
+        <span>Time (ms)</span>
         <input id="event-time" type="number" min="0" max="${session.timeline.duration_ms}" value="${event.time_ms}" />
       </label>
       <label class="edit-field">
         <span>Hue</span>
-        <input id="event-hue" type="range" min="0" max="360" value="${hue}" />
+        <input id="event-hue" class="hue-range" type="range" min="0" max="360" value="${hue}" />
       </label>
       <label class="edit-field">
         <span>Saturation</span>
@@ -478,12 +489,12 @@ function renderInspector() {
         <input id="event-kelvin" type="number" min="1500" max="9000" step="100" value="${kelvin}" />
       </label>
       <label class="edit-field">
-        <span>Duration</span>
+        <span>Duration (ms)</span>
         <input id="event-duration" type="number" min="0" step="10" value="${durationMS}" />
       </label>
       <div class="inspector-actions">
-        <button id="duplicate-event" class="tool">Duplicate</button>
-        <button id="delete-event" class="tool danger">Delete</button>
+        <button id="duplicate-event" class="tool icon-action" title="Duplicate event" aria-label="Duplicate event">⧉</button>
+        <button id="delete-event" class="tool danger icon-action" title="Delete event" aria-label="Delete event">×</button>
       </div>
     </aside>
   `;
@@ -503,8 +514,7 @@ function bindEvents() {
   });
   document.querySelector('#target')?.addEventListener('change', () => {
     state.targetTokens = splitTarget(inputValue('target', targetString()));
-    syncSessionTarget();
-    markRegenerationRequired('Target changed; regenerate to update device actions');
+    handleTargetChanged();
     render();
   });
   document.querySelector('#play-toggle')?.addEventListener('pointerdown', (event) => {
@@ -529,8 +539,7 @@ function bindEvents() {
   document.querySelectorAll<HTMLButtonElement>('[data-target-token]').forEach((button) => {
     button.addEventListener('click', () => {
       toggleTargetToken(button.dataset.targetToken ?? 'all');
-      syncSessionTarget();
-      markRegenerationRequired('Target changed; regenerate to update device actions');
+      handleTargetChanged();
       render();
     });
   });
@@ -538,15 +547,21 @@ function bindEvents() {
   document.querySelectorAll<HTMLButtonElement>('.device[data-device]').forEach((button) => {
     button.addEventListener('click', () => {
       toggleTargetToken(button.dataset.device ?? 'all');
-      syncSessionTarget();
-      markRegenerationRequired('Target changed; regenerate to update device actions');
+      handleTargetChanged();
       render();
     });
   });
 
   document.querySelectorAll<HTMLButtonElement>('.event').forEach((button) => {
     button.addEventListener('click', () => {
-      state.selectedEvent = Number(button.dataset.event ?? -1);
+      const index = Number(button.dataset.event ?? -1);
+      if (state.selectedEvent === index) {
+        state.selectedEvent = -1;
+        state.inspectorOpen = false;
+      } else {
+        state.selectedEvent = index;
+        state.inspectorOpen = true;
+      }
       render();
     });
     button.addEventListener('dragstart', (event) => {
@@ -565,10 +580,12 @@ function bindEvents() {
       }
       const rect = lane.getBoundingClientRect();
       const x = clamp(event.clientX - rect.left, 0, rect.width);
-      session.timeline.events[index].time_ms = Math.round(x / state.zoomPxPerSecond * 1000);
-      state.selectedEvent = index;
-      state.status = `Moved event to ${formatTime(session.timeline.events[index].time_ms)}`;
+      const movedEvent = session.timeline.events[index];
+      movedEvent.time_ms = Math.round(x / state.zoomPxPerSecond * 1000);
+      state.inspectorOpen = true;
+      state.status = `Moved event to ${formatTime(movedEvent.time_ms)}`;
       sortTimeline(session.timeline);
+      state.selectedEvent = session.timeline.events.indexOf(movedEvent);
       render();
     });
   });
@@ -584,7 +601,6 @@ function bindInspector() {
   }
   const update = () => {
     const params = mutableParams(event);
-    event.target = inputValue('event-target', event.target);
     event.time_ms = clamp(Number(inputValue('event-time', String(event.time_ms))), 0, session.timeline.duration_ms);
     params.hue = Number(inputValue('event-hue', String(params.hue ?? 240)));
     params.saturation = Number(inputValue('event-saturation', String(params.saturation ?? 100)));
@@ -592,16 +608,20 @@ function bindInspector() {
     params.kelvin = Number(inputValue('event-kelvin', String(params.kelvin ?? 3500)));
     params.duration_ms = Number(inputValue('event-duration', String(params.duration_ms ?? 180)));
     state.status = 'Edited selected event';
+    sortTimeline(session.timeline);
+    state.selectedEvent = session.timeline.events.indexOf(event);
+    state.inspectorOpen = true;
     render();
   };
 
-  ['event-target', 'event-time', 'event-hue', 'event-saturation', 'event-brightness', 'event-kelvin', 'event-duration']
+  ['event-time', 'event-hue', 'event-saturation', 'event-brightness', 'event-kelvin', 'event-duration']
     .forEach((id) => document.querySelector(`#${id}`)?.addEventListener('change', update));
 
   document.querySelector('#delete-event')?.addEventListener('click', () => {
     if (state.selectedEvent >= 0) {
       session.timeline.events.splice(state.selectedEvent, 1);
       state.selectedEvent = -1;
+      state.inspectorOpen = false;
       state.status = 'Deleted event';
       render();
     }
@@ -612,9 +632,10 @@ function bindInspector() {
       const copy = structuredClone(session.timeline.events[state.selectedEvent]);
       copy.time_ms = Math.min(copy.time_ms + 250, session.timeline.duration_ms);
       session.timeline.events.push(copy);
-      state.selectedEvent = session.timeline.events.length - 1;
       state.status = 'Duplicated event';
       sortTimeline(session.timeline);
+      state.selectedEvent = session.timeline.events.indexOf(copy);
+      state.inspectorOpen = true;
       render();
     }
   });
@@ -671,9 +692,9 @@ async function discoverDevices() {
     syncSessionTarget();
     if (state.session?.source === 'generated') {
       state.needsRegeneration = true;
-      state.status = `Discovered ${discovered.length} devices; regenerate to update choreography`;
+      state.status = `Discovered ${discovered.length} lighting devices; regenerate to update choreography`;
     } else {
-      state.status = `Discovered ${discovered.length} LIFX devices`;
+      state.status = `Discovered ${discovered.length} LIFX lighting devices`;
     }
   } catch (error) {
     state.status = readableError(error);
@@ -759,7 +780,7 @@ async function togglePlayback() {
       await StartPreview({
         audio_path: selectedSongPath(),
         target: targetString(),
-        timeline: session.timeline,
+        timeline: timelineForSelectedTargets(session),
       } as any);
     } catch (error) {
       state.playing = false;
@@ -984,7 +1005,7 @@ function firstDeviceID(session: EditorSession | null) {
 }
 
 function laneIDs(session: EditorSession) {
-  return session.devices.map((device) => device.id);
+  return selectedTargetDevices(session).map((device) => device.id);
 }
 
 function eventAppliesToLane(event: TimelineEvent, device: DeviceInfo | undefined, lane: string) {
@@ -999,6 +1020,111 @@ function eventAppliesToLane(event: TimelineEvent, device: DeviceInfo | undefined
     sameToken(target, device.group) ||
     sameToken(target, device.location)
   ));
+}
+
+function eventTargetLabel(session: EditorSession, event: TimelineEvent) {
+  const labels = splitTarget(event.target).map((target) => {
+    if (sameToken(target, 'all')) {
+      return 'All targets';
+    }
+    const device = session.devices.find((candidate) => (
+      sameToken(candidate.id, target) ||
+      sameToken(candidate.label, target)
+    ));
+    if (device) {
+      return device.label || device.id;
+    }
+    const groupMatch = session.devices.find((candidate) => sameToken(candidate.group, target));
+    if (groupMatch) {
+      return `Group: ${groupMatch.group}`;
+    }
+    const locationMatch = session.devices.find((candidate) => sameToken(candidate.location, target));
+    if (locationMatch) {
+      return `Location: ${locationMatch.location}`;
+    }
+    return target;
+  });
+  return labels.join(', ');
+}
+
+function handleTargetChanged() {
+  syncSessionTarget();
+  state.selectedEvent = -1;
+  state.inspectorOpen = false;
+  const session = state.session;
+  if (!session || session.source !== 'generated') {
+    return;
+  }
+  if (generatedTimelineCoversSelectedTargets(session)) {
+    state.needsRegeneration = false;
+    state.status = 'Target changed; existing choreography filtered to selected devices';
+    return;
+  }
+  markRegenerationRequired('Target changed; regenerate to create device actions');
+}
+
+function selectedTargetDevices(session: EditorSession) {
+  const tokens = state.targetTokens.length > 0 ? state.targetTokens : splitTarget(session.target || 'all');
+  const seen = new Set<string>();
+  const devices: DeviceInfo[] = [];
+  const addDevice = (device: DeviceInfo) => {
+    if (!device.id || seen.has(device.id)) {
+      return;
+    }
+    seen.add(device.id);
+    devices.push(device);
+  };
+
+  for (const token of tokens) {
+    if (sameToken(token, 'all')) {
+      session.devices.forEach(addDevice);
+      continue;
+    }
+    session.devices
+      .filter((device) => matchesDeviceToken(token, device))
+      .forEach(addDevice);
+  }
+  return devices;
+}
+
+function timelineForSelectedTargets(session: EditorSession): Timeline {
+  const devices = selectedTargetDevices(session);
+  if (devices.length === 0) {
+    return session.timeline;
+  }
+  const target = targetString();
+  const events = session.timeline.events
+    .filter((event) => eventAppliesToAnyDevice(event, devices))
+    .map((event) => {
+      if (splitTarget(event.target).some((token) => sameToken(token, 'all'))) {
+        return { ...structuredClone(event), target };
+      }
+      return structuredClone(event);
+    });
+  return { ...session.timeline, events };
+}
+
+function generatedTimelineCoversSelectedTargets(session: EditorSession) {
+  const devices = selectedTargetDevices(session);
+  if (devices.length === 0) {
+    return false;
+  }
+  return devices.every((device) => session.timeline.events.some((event) => (
+    event.action !== 'power_on' &&
+    event.action !== 'power_off' &&
+    eventAppliesToLane(event, device, device.id)
+  )));
+}
+
+function eventAppliesToAnyDevice(event: TimelineEvent, devices: DeviceInfo[]) {
+  return devices.some((device) => eventAppliesToLane(event, device, device.id));
+}
+
+function matchesDeviceToken(token: string, device: DeviceInfo) {
+  return sameToken(token, device.id) ||
+    sameToken(token, device.label) ||
+    sameToken(token, device.group) ||
+    sameToken(token, device.location);
 }
 
 function renderTicks(duration: number) {
