@@ -33,8 +33,33 @@ func TestPerformUsesTargetFlag(t *testing.T) {
 	}
 }
 
-func TestDefaultPythonPathPrefersProjectVenv(t *testing.T) {
-	if got := defaultPythonPath(); got == "" {
-		t.Fatal("default python path is empty")
+func TestNewAnalyzerResolvesARunnableAnalyzer(t *testing.T) {
+	analyzer, err := newAnalyzer(analyzeCommand())
+	if err != nil {
+		t.Fatalf("newAnalyzer: %v", err)
+	}
+	if analyzer.BinaryPath == "" && analyzer.PythonPath == "" {
+		t.Fatal("analyzer has neither a bundled binary nor a python interpreter")
+	}
+}
+
+func TestNewAnalyzerHonoursPythonOverride(t *testing.T) {
+	cmd := analyzeCommand()
+	if err := cmd.Set("python", "/usr/bin/python3"); err != nil {
+		t.Fatalf("set python flag: %v", err)
+	}
+
+	analyzer, err := newAnalyzer(cmd)
+	if err != nil {
+		t.Fatalf("newAnalyzer: %v", err)
+	}
+	if analyzer.PythonPath != "/usr/bin/python3" {
+		t.Fatalf("python override ignored: got %q", analyzer.PythonPath)
+	}
+	if analyzer.BinaryPath != "" {
+		t.Fatal("python override should bypass the bundled analyzer")
+	}
+	if analyzer.ScriptPath == "" {
+		t.Fatal("python override needs an analyzer script path")
 	}
 }

@@ -22,6 +22,12 @@ analyzer/.venv/
 __pycache__/
 *.py[cod]
 
+# PyInstaller output from freezing the analyzer. Release CI writes the frozen
+# bundle into internal/analyzerbin/assets/analyzer.zip, which stays a small
+# committed placeholder in development builds.
+analyzer-dist/
+analyzer-build/
+
 # Generated local project output
 projects/*.json
 !projects/demo.json

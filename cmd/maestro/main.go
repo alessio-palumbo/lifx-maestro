@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"runtime"
 
 	"github.com/urfave/cli/v3"
 
 	"lifx-maestro/internal/analysis"
+	"lifx-maestro/internal/analyzerbin"
 	"lifx-maestro/internal/audio"
 	"lifx-maestro/internal/devices"
 	"lifx-maestro/internal/generation"
@@ -79,7 +79,7 @@ func analyzeCommand() *cli.Command {
 		Usage:     "analyze an audio file and print analysis JSON",
 		ArgsUsage: "<song.mp3|song.wav>",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "python", Value: defaultPythonPath(), Usage: "python executable"},
+			&cli.StringFlag{Name: "python", Usage: "python executable (overrides the bundled analyzer)"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			audioPath, err := singleArg(cmd, "maestro analyze [--python analyzer/.venv/bin/python] <song.mp3|song.wav>")
@@ -93,8 +93,10 @@ func analyzeCommand() *cli.Command {
 			ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
 			defer stop()
 
-			analyzer := analysis.NewAnalyzer()
-			analyzer.PythonPath = cmd.String("python")
+			analyzer, err := newAnalyzer(cmd)
+			if err != nil {
+				return err
+			}
 
 			result, err := analyzer.Analyze(ctx, audioPath)
 			if err != nil {
@@ -120,7 +122,7 @@ func generateCommand() *cli.Command {
 			&cli.StringFlag{Name: "output", Usage: "timeline JSON output path"},
 			&cli.StringFlag{Name: "style", Usage: "generation style"},
 			&cli.StringFlag{Name: "target", Value: "all", Usage: "timeline target selector"},
-			&cli.StringFlag{Name: "python", Value: defaultPythonPath(), Usage: "python executable"},
+			&cli.StringFlag{Name: "python", Usage: "python executable (overrides the bundled analyzer)"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			audioPath, err := singleArg(cmd, "maestro generate [--output projects/song.json] [--style synthwave] [--target all] [--python analyzer/.venv/bin/python] <song.mp3|song.wav>")
@@ -139,8 +141,10 @@ func generateCommand() *cli.Command {
 			ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
 			defer stop()
 
-			analyzer := analysis.NewAnalyzer()
-			analyzer.PythonPath = cmd.String("python")
+			analyzer, err := newAnalyzer(cmd)
+			if err != nil {
+				return err
+			}
 
 			result, err := analyzer.Analyze(ctx, audioPath)
 			if err != nil {
@@ -176,7 +180,7 @@ func performCommand() *cli.Command {
 			&cli.BoolFlag{Name: "verbose", Usage: "print synchronization details"},
 			&cli.StringFlag{Name: "style", Usage: "generation style"},
 			&cli.StringFlag{Name: "target", Value: "all", Usage: "target selector"},
-			&cli.StringFlag{Name: "python", Value: defaultPythonPath(), Usage: "python executable"},
+			&cli.StringFlag{Name: "python", Usage: "python executable (overrides the bundled analyzer)"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			audioPath, err := singleArg(cmd, "maestro perform [--dry-run] [--verbose] [--style synthwave] [--target all] [--python analyzer/.venv/bin/python] <song.mp3>")
@@ -200,12 +204,17 @@ func performCommand() *cli.Command {
 			ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
 			defer stop()
 
+			analyzer, err := newAnalyzer(cmd)
+			if err != nil {
+				return err
+			}
+
 			result, err := perform.Run(ctx, audioPath, controller, perform.Options{
-				Style:      cmd.String("style"),
-				Target:     target,
-				PythonPath: cmd.String("python"),
-				Verbose:    cmd.Bool("verbose"),
-				Out:        os.Stdout,
+				Style:    cmd.String("style"),
+				Target:   target,
+				Analyzer: analyzer,
+				Verbose:  cmd.Bool("verbose"),
+				Out:      os.Stdout,
 			})
 			if err != nil {
 				return err
@@ -314,26 +323,16 @@ func closeController(controller interface{ Close() error }) {
 	}
 }
 
-func defaultPythonPath() string {
-	candidates := []string{
-		"analyzer/.venv/bin/python",
-		".venv/bin/python",
+// newAnalyzer resolves the analyzer for this build, honouring --python as an
+// explicit override of the bundled analyzer.
+func newAnalyzer(cmd *cli.Command) (analysis.Analyzer, error) {
+	if override := cmd.String("python"); override != "" {
+		return analysis.Analyzer{
+			PythonPath: override,
+			ScriptPath: analyzerbin.DevScriptPath(),
+		}, nil
 	}
-	if runtime.GOOS == "windows" {
-		candidates = []string{
-			"analyzer/.venv/Scripts/python.exe",
-			".venv/Scripts/python.exe",
-		}
-	}
-	for _, candidate := range candidates {
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
-		}
-	}
-	if runtime.GOOS == "windows" {
-		return "python"
-	}
-	return "python3"
+	return analyzerbin.NewAnalyzer()
 }
 
 func displayName(info devices.DeviceInfo) string {

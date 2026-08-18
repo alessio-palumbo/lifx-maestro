@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"lifx-maestro/internal/analysis"
+	"lifx-maestro/internal/analyzerbin"
 	"lifx-maestro/internal/audio"
 	"lifx-maestro/internal/devices"
 	"lifx-maestro/internal/generation"
@@ -14,16 +15,33 @@ import (
 )
 
 type Options struct {
-	Style      string
-	Target     string
-	PythonPath string
-	Verbose    bool
-	Out        io.Writer
+	Style  string
+	Target string
+	// Analyzer runs the audio analysis. Leave it unset to resolve the analyzer
+	// this build ships with: the bundled executable, or a development Python
+	// interpreter plus analyzer/analyze.py.
+	Analyzer analysis.Analyzer
+	Verbose  bool
+	Out      io.Writer
 }
 
 type Result struct {
 	Analysis *analysis.SongAnalysis
 	Events   int
+}
+
+// resolveAnalyzer honours a caller-supplied analyzer and otherwise resolves the
+// one this build ships with. It must not fall back to analysis.NewAnalyzer,
+// whose default script path is only valid on the machine that compiled it.
+func resolveAnalyzer(options Options) (analysis.Analyzer, error) {
+	if options.Analyzer.BinaryPath != "" || options.Analyzer.PythonPath != "" {
+		return options.Analyzer, nil
+	}
+	analyzer, err := analyzerbin.NewAnalyzer()
+	if err != nil {
+		return analyzer, fmt.Errorf("prepare analyzer: %w", err)
+	}
+	return analyzer, nil
 }
 
 func Run(ctx context.Context, audioPath string, controller devices.DeviceController, options Options) (*Result, error) {
@@ -37,9 +55,9 @@ func Run(ctx context.Context, audioPath string, controller devices.DeviceControl
 		options.Target = "all"
 	}
 
-	analyzer := analysis.NewAnalyzer()
-	if options.PythonPath != "" {
-		analyzer.PythonPath = options.PythonPath
+	analyzer, err := resolveAnalyzer(options)
+	if err != nil {
+		return nil, err
 	}
 
 	if options.Verbose && options.Out != nil {

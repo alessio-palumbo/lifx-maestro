@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
-	stdruntime "runtime"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +12,7 @@ import (
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"lifx-maestro/internal/analysis"
+	"lifx-maestro/internal/analyzerbin"
 	"lifx-maestro/internal/audio"
 	"lifx-maestro/internal/devices"
 	"lifx-maestro/internal/generation"
@@ -104,6 +103,11 @@ func (a *App) startup(ctx context.Context) {
 	go func() {
 		_, _ = a.lifxController()
 	}()
+	// Unpack the bundled analyzer up front so the first analysis does not pay
+	// for extraction. Analyze reports any failure when it retries.
+	go func() {
+		_, _ = analyzerbin.EnsureInstalled()
+	}()
 }
 
 func (a *App) shutdown(ctx context.Context) {
@@ -183,8 +187,10 @@ func (a *App) Analyze(audioPath string) (analysis.SongAnalysis, error) {
 		return analysis.SongAnalysis{}, err
 	}
 
-	analyzer := analysis.NewAnalyzer()
-	analyzer.PythonPath = defaultUIPythonPath()
+	analyzer, err := analyzerbin.NewAnalyzer()
+	if err != nil {
+		return analysis.SongAnalysis{}, fmt.Errorf("prepare analyzer: %w", err)
+	}
 	result, err := analyzer.Analyze(a.ctx, audioPath)
 	if err != nil {
 		return analysis.SongAnalysis{}, err
@@ -599,28 +605,6 @@ func editorDeviceInfos() []devices.DeviceInfo {
 			},
 		},
 	}
-}
-
-func defaultUIPythonPath() string {
-	candidates := []string{
-		filepath.Join("analyzer", ".venv", "bin", "python"),
-		filepath.Join(".venv", "bin", "python"),
-	}
-	if stdruntime.GOOS == "windows" {
-		candidates = []string{
-			filepath.Join("analyzer", ".venv", "Scripts", "python.exe"),
-			filepath.Join(".venv", "Scripts", "python.exe"),
-		}
-	}
-	for _, candidate := range candidates {
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
-		}
-	}
-	if stdruntime.GOOS == "windows" {
-		return "python"
-	}
-	return "python3"
 }
 
 func prettyParams(raw json.RawMessage) string {

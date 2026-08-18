@@ -1,10 +1,11 @@
 # lifx-maestro
 
-lifx-maestro is a local-first CLI for generating and playing synchronized smart-light choreographies from music.
+lifx-maestro is a local-first desktop app for generating and playing synchronized smart-light choreographies from music.
+It ships as a Wails GUI, with `maestro` as an equivalent CLI for scripting and development.
 
 The current implementation can:
 
-- analyze MP3/WAV audio with a Python helper
+- analyze MP3/WAV audio, with no Python install needed in released builds
 - estimate tempo, beats, energy, and rough song sections
 - generate deterministic timeline JSON
 - play timelines against LIFX LAN devices
@@ -14,7 +15,9 @@ The current implementation can:
 - run in dry-run mode without touching real lights
 - restore the initial light state when playback exits
 
-The project intentionally does not include a GUI, AI generation, waveform rendering, or live visualization yet.
+The desktop app adds device discovery, a timeline editor with per-event colors, and audio-synchronized preview with pause and resume.
+
+The project intentionally does not include AI generation, waveform rendering, or live visualization yet.
 
 ## Setup
 
@@ -31,7 +34,9 @@ python3 -m venv analyzer/.venv
 analyzer/.venv/bin/python -m pip install -r analyzer/requirements.txt
 ```
 
-The CLI automatically prefers `analyzer/.venv/bin/python` when it exists. You can still override the executable with `--python`.
+Development builds automatically prefer `analyzer/.venv/bin/python` when it exists, resolved relative to the source tree rather than the working directory. You can still override the executable with `--python`.
+
+Released builds do not need any of this: see [Bundled analyzer](#bundled-analyzer).
 
 If your Python is externally managed and you prefer a repo-root venv, that is also detected:
 
@@ -45,6 +50,40 @@ Override explicitly when needed:
 ```bash
 go run ./cmd/maestro analyze samples/song.mp3 --python .venv/bin/python
 ```
+
+## Bundled analyzer
+
+Release builds ship the audio analyzer as a self-contained executable, so
+downloaded apps analyze audio with no Python install and no `pip install` step.
+
+- Release CI freezes `analyzer/analyze.py` with PyInstaller, smoke tests it, and
+  writes the bundle to `internal/analyzerbin/assets/analyzer.zip`.
+- `internal/analyzerbin` embeds that archive and extracts it to
+  `~/.lifx-maestro/analyzer` on first launch, re-extracting whenever
+  `analyzerbin.Version` changes.
+- The repository commits a 22-byte placeholder archive in its place, so
+  development builds stay small and fall back to a local Python interpreter plus
+  `analyzer/analyze.py`.
+
+Bump `Version` in `internal/analyzerbin/version.go` whenever `analyze.py` or its
+dependencies change, otherwise existing installs keep their extracted copy.
+
+To reproduce a bundled build locally:
+
+```bash
+analyzer/.venv/bin/python -m pip install pyinstaller
+analyzer/.venv/bin/pyinstaller --noconfirm --clean --onedir --name analyze \
+  --distpath analyzer-dist --workpath analyzer-build --specpath analyzer-build \
+  --collect-all librosa --collect-all lazy_loader --collect-all soxr \
+  --collect-all soundfile --collect-all audioread --collect-all numba \
+  --collect-all llvmlite --collect-submodules sklearn \
+  analyzer/analyze.py
+rm -f internal/analyzerbin/assets/analyzer.zip
+(cd analyzer-dist && zip -qry ../internal/analyzerbin/assets/analyzer.zip analyze)
+```
+
+Restore the placeholder with `git checkout internal/analyzerbin/assets/analyzer.zip`
+when you are done, so the bundle is never committed.
 
 ## Quick Start
 
@@ -96,7 +135,7 @@ go run ./cmd/maestro analyze <song.mp3|song.wav>
 
 Options:
 
-- `--python string`: Python executable to use. Default: `analyzer/.venv/bin/python` when present, then `.venv/bin/python`, then `python3`
+- `--python string`: Python executable to use instead of the bundled analyzer. Default: the bundled analyzer in released builds, otherwise `analyzer/.venv/bin/python`, then `.venv/bin/python`, then `python3`
 
 Example:
 
@@ -125,7 +164,7 @@ Options:
 - `--output string`: timeline JSON output path. If omitted, writes to `projects/<song-name>.json`
 - `--style string`: generation style
 - `--target string`: timeline target selector. Default: `all`
-- `--python string`: Python executable. Default: `analyzer/.venv/bin/python` when present, then `.venv/bin/python`, then `python3`
+- `--python string`: Python executable to use instead of the bundled analyzer. Default: the bundled analyzer in released builds, otherwise `analyzer/.venv/bin/python`, then `.venv/bin/python`, then `python3`
 
 Examples:
 
@@ -149,7 +188,7 @@ Options:
 - `--verbose`: print analysis, scheduler, and playback logs
 - `--style string`: generation style
 - `--target string`: target selector. Default: `all`
-- `--python string`: Python executable. Default: `analyzer/.venv/bin/python` when present, then `.venv/bin/python`, then `python3`
+- `--python string`: Python executable to use instead of the bundled analyzer. Default: the bundled analyzer in released builds, otherwise `analyzer/.venv/bin/python`, then `.venv/bin/python`, then `python3`
 
 Examples:
 
@@ -406,7 +445,8 @@ python3 -m py_compile analyzer/analyze.py
 ## Current Limitations
 
 - Audio playback in `perform` currently supports MP3.
-- Audio analysis depends on Python packages from `analyzer/requirements.txt`.
+- Audio analysis in development builds depends on Python packages from `analyzer/requirements.txt`. Released builds use the bundled analyzer instead.
 - Section detection is heuristic and approximate.
 - Multizone and matrix rendering is intentionally simple: gradients, sweeps, pulses, and full color arrays only.
-- No GUI, AI generation, waveform view, or timeline editor yet.
+- No AI generation or waveform view yet.
+- Released macOS and Windows builds are unsigned, so the OS warns on first launch.

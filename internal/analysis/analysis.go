@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -32,6 +34,9 @@ type Section struct {
 }
 
 type Analyzer struct {
+	// BinaryPath runs a self-contained analyzer executable. When set it takes
+	// precedence over PythonPath/ScriptPath, which are the development fallback.
+	BinaryPath string
 	PythonPath string
 	ScriptPath string
 	Timeout    time.Duration
@@ -46,11 +51,13 @@ func NewAnalyzer() Analyzer {
 }
 
 func (a Analyzer) Analyze(ctx context.Context, audioPath string) (*SongAnalysis, error) {
-	if a.PythonPath == "" {
-		a.PythonPath = "python3"
-	}
-	if a.ScriptPath == "" {
-		a.ScriptPath = defaultScriptPath()
+	if a.BinaryPath == "" {
+		if a.PythonPath == "" {
+			a.PythonPath = "python3"
+		}
+		if a.ScriptPath == "" {
+			a.ScriptPath = defaultScriptPath()
+		}
 	}
 	if a.Timeout <= 0 {
 		a.Timeout = 2 * time.Minute
@@ -59,7 +66,7 @@ func (a Analyzer) Analyze(ctx context.Context, audioPath string) (*SongAnalysis,
 	ctx, cancel := context.WithTimeout(ctx, a.Timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, a.PythonPath, a.ScriptPath, audioPath)
+	cmd := a.command(ctx, audioPath)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -69,7 +76,7 @@ func (a Analyzer) Analyze(ctx context.Context, audioPath string) (*SongAnalysis,
 		if ctx.Err() != nil {
 			return nil, fmt.Errorf("analyze audio timed out: %w", ctx.Err())
 		}
-		return nil, fmt.Errorf("run analyzer: %w: %s", err, stderr.String())
+		return nil, a.runError(err, stderr.String())
 	}
 
 	var result SongAnalysis
@@ -80,6 +87,42 @@ func (a Analyzer) Analyze(ctx context.Context, audioPath string) (*SongAnalysis,
 		return nil, err
 	}
 	return &result, nil
+}
+
+func (a Analyzer) command(ctx context.Context, audioPath string) *exec.Cmd {
+	if a.BinaryPath != "" {
+		return exec.CommandContext(ctx, a.BinaryPath, audioPath)
+	}
+	return exec.CommandContext(ctx, a.PythonPath, a.ScriptPath, audioPath)
+}
+
+// runError explains the two failures users actually hit: no interpreter on the
+// machine, and an interpreter without the analyzer's dependencies.
+func (a Analyzer) runError(err error, stderr string) error {
+	stderr = strings.TrimSpace(stderr)
+
+	if a.BinaryPath != "" {
+		if stderr == "" {
+			return fmt.Errorf("run bundled analyzer %s: %w", a.BinaryPath, err)
+		}
+		return fmt.Errorf("run bundled analyzer %s: %w: %s", a.BinaryPath, err, stderr)
+	}
+
+	if errors.Is(err, exec.ErrNotFound) {
+		return fmt.Errorf("python interpreter %q not found: install Python 3 and the analyzer dependencies (pip install -r analyzer/requirements.txt)", a.PythonPath)
+	}
+	if strings.Contains(stderr, "ModuleNotFoundError") || strings.Contains(stderr, "No module named") {
+		return fmt.Errorf("python interpreter %s is missing analyzer dependencies: run %s -m pip install -r analyzer/requirements.txt (details: %s)", a.PythonPath, a.PythonPath, lastLine(stderr))
+	}
+	if stderr == "" {
+		return fmt.Errorf("run analyzer %s %s: %w", a.PythonPath, a.ScriptPath, err)
+	}
+	return fmt.Errorf("run analyzer: %w: %s", err, stderr)
+}
+
+func lastLine(s string) string {
+	lines := strings.Split(s, "\n")
+	return strings.TrimSpace(lines[len(lines)-1])
 }
 
 func (s SongAnalysis) Validate() error {
