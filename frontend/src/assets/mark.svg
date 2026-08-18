@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024"><defs>
+  <radialGradient id="bg" cx="50%" cy="40%" r="75%"><stop offset="0%" stop-color="#15191F"></stop><stop offset="100%" stop-color="#0B0D11"></stop></radialGradient>
+  <filter id="g" x="-70%" y="-70%" width="240%" height="240%"><feGaussianBlur stdDeviation="30"></feGaussianBlur></filter>
+  <filter id="gs" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="9"></feGaussianBlur></filter></defs><g transform="translate(72 72) scale(0.859375)"><rect x="0" y="0" width="1024" height="1024" rx="230" fill="url(#bg)"></rect><rect x="2" y="2" width="1020" height="1020" rx="228" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="2"></rect>
+    <!-- soft depth glow behind the wave -->
+    <circle cx="512" cy="512" r="300" fill="#FFFFFF" opacity="0.05" filter="url(#g)"></circle>
+    <!-- baseline / timeline -->
+    <rect x="72" y="509" width="880" height="6" rx="3" fill="rgba(255,255,255,0.07)"></rect>
+    <!-- glow layer -->
+    <g filter="url(#gs)" opacity="0.55">
+      <rect x="72"  y="447" width="40" height="130" rx="20" fill="#34E7D6"></rect>
+      <rect x="142" y="392" width="40" height="240" rx="20" fill="#34E79B"></rect>
+      <rect x="212" y="422" width="40" height="180" rx="20" fill="#5BE08C"></rect>
+      <rect x="282" y="347" width="40" height="330" rx="20" fill="#A6E24A"></rect>
+      <rect x="352" y="302" width="40" height="420" rx="20" fill="#FFD84D"></rect>
+      <rect x="422" y="372" width="40" height="280" rx="20" fill="#FFB23E"></rect>
+      <rect x="492" y="252" width="40" height="520" rx="20" fill="#FF7A3D"></rect>
+      <rect x="562" y="342" width="40" height="340" rx="20" fill="#FF4D8D"></rect>
+      <rect x="632" y="277" width="40" height="470" rx="20" fill="#F24DD0"></rect>
+      <rect x="702" y="397" width="40" height="230" rx="20" fill="#C24DFF"></rect>
+      <rect x="772" y="322" width="40" height="380" rx="20" fill="#7A6CFF"></rect>
+      <rect x="842" y="427" width="40" height="170" rx="20" fill="#4D9CFF"></rect>
+      <rect x="912" y="452" width="40" height="120" rx="20" fill="#34C6E7"></rect>
+    </g>
+    <!-- crisp bars -->
+    <rect x="72"  y="447" width="40" height="130" rx="20" fill="#34E7D6"></rect>
+    <rect x="142" y="392" width="40" height="240" rx="20" fill="#34E79B"></rect>
+    <rect x="212" y="422" width="40" height="180" rx="20" fill="#5BE08C"></rect>
+    <rect x="282" y="347" width="40" height="330" rx="20" fill="#A6E24A"></rect>
+    <rect x="352" y="302" width="40" height="420" rx="20" fill="#FFD84D"></rect>
+    <rect x="422" y="372" width="40" height="280" rx="20" fill="#FFB23E"></rect>
+    <rect x="492" y="252" width="40" height="520" rx="20" fill="#FF7A3D"></rect>
+    <rect x="562" y="342" width="40" height="340" rx="20" fill="#FF4D8D"></rect>
+    <rect x="632" y="277" width="40" height="470" rx="20" fill="#F24DD0"></rect>
+    <rect x="702" y="397" width="40" height="230" rx="20" fill="#C24DFF"></rect>
+    <rect x="772" y="322" width="40" height="380" rx="20" fill="#7A6CFF"></rect>
+    <rect x="842" y="427" width="40" height="170" rx="20" fill="#4D9CFF"></rect>
+    <rect x="912" y="452" width="40" height="120" rx="20" fill="#34C6E7"></rect></g></svg>

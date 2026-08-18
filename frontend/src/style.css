@@ -59,13 +59,10 @@ button {
 }
 
 .mark {
-  width: 34px;
-  height: 34px;
+  width: 40px;
+  height: 40px;
   border-radius: 8px;
-  background:
-    linear-gradient(135deg, #24d0ff, #fa4dd2 55%, #ffe15a),
-    #28313e;
-  box-shadow: 0 0 24px rgba(36, 208, 255, 0.18);
+  background: url('./assets/mark.svg') center / cover no-repeat;
 }
 
 .product {
