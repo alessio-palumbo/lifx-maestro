@@ -5,6 +5,8 @@ import {main} from '../models';
 
 export function Analyze(arg1:string):Promise<analysis.SongAnalysis>;
 
+export function AnalyzerPreparing():Promise<boolean>;
+
 export function AudioDuration(arg1:string):Promise<number>;
 
 export function ChooseAudioFile():Promise<string>;

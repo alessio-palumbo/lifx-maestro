@@ -436,6 +436,13 @@ Run Go tests:
 go test ./...
 ```
 
+Preview the first-run walkthrough, which normally only shows while the bundled
+analyzer prepares itself and so never appears in a development build:
+
+```bash
+LIFX_MAESTRO_FORCE_TOUR=1 wails dev
+```
+
 Check the Python analyzer syntax:
 
 ```bash

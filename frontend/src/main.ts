@@ -1,6 +1,51 @@
 import './style.css';
 
-import { Analyze, AudioDuration, ChooseAudioFile, ChooseTimelineSavePath, DiscoverDevices, GenerateFromAnalysis, PausePreview, ResumePreview, SaveTimeline, StartAudioPreview, StartPreview, StopPreview, Styles } from '../wailsjs/go/main/App';
+import { Analyze, AnalyzerPreparing, AudioDuration, ChooseAudioFile, ChooseTimelineSavePath, DiscoverDevices, GenerateFromAnalysis, PausePreview, ResumePreview, SaveTimeline, StartAudioPreview, StartPreview, StopPreview, Styles } from '../wailsjs/go/main/App';
+
+// The walkthrough only appears while the bundled analyzer is preparing itself,
+// which is the one moment there is a wait worth filling. Set LIFX_MAESTRO_FORCE_TOUR
+// to preview it in a development build, which has no analyzer to prepare.
+type TourStep = {
+  // First selector that matches wins, so a step still lands when the UI is in a
+  // different state (a collapsed sidebar, a control not yet enabled).
+  anchors: string[];
+  title: string;
+  body: string;
+  placement: 'below' | 'right';
+};
+
+const TOUR_STEPS: TourStep[] = [
+  {
+    anchors: ['#choose-song'],
+    title: 'Choose a song',
+    body: 'Pick an MP3 or WAV file to build a light show from.',
+    placement: 'below',
+  },
+  {
+    anchors: ['#style'],
+    title: 'Pick a style',
+    body: 'The style decides which effects get used, from minimal pulses to full synthwave sweeps.',
+    placement: 'below',
+  },
+  {
+    anchors: ['#regenerate'],
+    title: 'Generate',
+    body: 'Analyses the track for tempo, beats and sections, then builds an editable timeline.',
+    placement: 'below',
+  },
+  {
+    anchors: ['.sidebar .device', '.sidebar', '#toggle-sidebar'],
+    title: 'Select targets',
+    body: 'Choose which lights the timeline drives. Generate again after changing your selection.',
+    placement: 'right',
+  },
+  {
+    anchors: ['#play-toggle'],
+    title: 'Play',
+    body: 'Plays the audio and drives your lights from the same clock, so they stay in sync.',
+    placement: 'below',
+  },
+];
 
 type DeviceKind = 'single_zone' | 'multi_zone' | 'matrix' | 'switch';
 
@@ -83,6 +128,8 @@ type AppState = {
   previewPaused: boolean;
   status: string;
   loading: boolean;
+  // Index into TOUR_STEPS, or null when the walkthrough is not showing.
+  tourStep: number | null;
   previewStarting: boolean;
   needsRegeneration: boolean;
   regenerationReasons: {
@@ -113,6 +160,7 @@ const state: AppState = {
   previewPaused: false,
   status: 'Loading editor',
   loading: false,
+  tourStep: null,
   previewStarting: false,
   needsRegeneration: false,
   regenerationReasons: {
@@ -142,7 +190,22 @@ const app = appRoot;
 
 void bootstrap();
 
+// The card and highlight are placed in viewport coordinates, so a resize has to
+// re-place them. Registered once, outside render, which rebuilds the DOM.
+window.addEventListener('resize', positionTour);
+
+// Whether the first-run walkthrough is worth showing. A failure here should never
+// keep the app from starting, so treat it as "nothing to explain".
+async function analyzerPreparing() {
+  try {
+    return await AnalyzerPreparing();
+  } catch {
+    return false;
+  }
+}
+
 async function bootstrap() {
+  state.tourStep = (await analyzerPreparing()) ? 0 : null;
   try {
     state.styles = await Styles();
     state.status = 'Discovering LIFX LAN devices';
@@ -173,10 +236,14 @@ function render() {
         ${renderInspector()}
       </div>
       ${renderOverlay()}
+      ${renderTour()}
     </div>
   `;
   bindEvents();
   restoreTimelineScroll();
+  // Anchor positions come from the DOM that was just built, so they can never go
+  // stale against a re-render.
+  positionTour();
 }
 
 function renderToolbar() {
@@ -236,6 +303,86 @@ function renderOverlay() {
       </div>
     </div>
   `;
+}
+
+function renderTour() {
+  const step = state.tourStep === null ? undefined : TOUR_STEPS[state.tourStep];
+  if (!step) {
+    return '';
+  }
+  // Stand aside for the spinner and prompts, which own the screen when they show.
+  if (state.loading || state.previewStarting || state.regenerationPrompt) {
+    return '';
+  }
+
+  const last = state.tourStep === TOUR_STEPS.length - 1;
+  return `
+    <div class="tour-layer">
+      <div class="tour-ring" id="tour-ring"></div>
+      <div class="tour-card" id="tour-card">
+        <div class="tour-progress">Step ${(state.tourStep ?? 0) + 1} of ${TOUR_STEPS.length}</div>
+        <strong>${escapeHTML(step.title)}</strong>
+        <span>${escapeHTML(step.body)}</span>
+        <div class="tour-actions">
+          <button id="tour-skip" class="tool">Skip</button>
+          <button id="tour-next" class="tool attention">${last ? 'Done' : 'Next'}</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// Positions the highlight and card against the live anchor. Steps advance only on
+// click, so a step whose control is disabled or hidden still reads sensibly.
+function positionTour() {
+  const step = state.tourStep === null ? undefined : TOUR_STEPS[state.tourStep];
+  const ring = document.querySelector<HTMLElement>('#tour-ring');
+  const card = document.querySelector<HTMLElement>('#tour-card');
+  if (!step || !ring || !card) {
+    return;
+  }
+
+  const anchor = step.anchors.reduce<Element | null>(
+    (found, selector) => found ?? document.querySelector(selector),
+    null,
+  );
+
+  const gap = 12;
+  if (!anchor) {
+    // Nothing on screen to point at, so present the step on its own.
+    ring.style.display = 'none';
+    card.style.left = `${Math.round((window.innerWidth - card.offsetWidth) / 2)}px`;
+    card.style.top = `${Math.round((window.innerHeight - card.offsetHeight) / 2)}px`;
+    return;
+  }
+
+  const rect = anchor.getBoundingClientRect();
+  const pad = 6;
+  ring.style.display = 'block';
+  ring.style.left = `${rect.left - pad}px`;
+  ring.style.top = `${rect.top - pad}px`;
+  ring.style.width = `${rect.width + pad * 2}px`;
+  ring.style.height = `${rect.height + pad * 2}px`;
+
+  const preferred = step.placement === 'right'
+    ? { left: rect.right + gap, top: rect.top }
+    : { left: rect.left, top: rect.bottom + gap };
+  card.style.left = `${Math.round(clamp(preferred.left, gap, window.innerWidth - card.offsetWidth - gap))}px`;
+  card.style.top = `${Math.round(clamp(preferred.top, gap, window.innerHeight - card.offsetHeight - gap))}px`;
+}
+
+function advanceTour() {
+  if (state.tourStep === null || state.tourStep >= TOUR_STEPS.length - 1) {
+    endTour();
+    return;
+  }
+  state.tourStep += 1;
+  render();
+}
+
+function endTour() {
+  state.tourStep = null;
+  render();
 }
 
 function renderTargets() {
@@ -571,6 +718,8 @@ function bindEvents() {
     state.inspectorOpen = !state.inspectorOpen;
     render();
   });
+  document.querySelector('#tour-next')?.addEventListener('click', advanceTour);
+  document.querySelector('#tour-skip')?.addEventListener('click', endTour);
   document.querySelector('#prompt-cancel')?.addEventListener('click', () => {
     state.regenerationPrompt = false;
     render();

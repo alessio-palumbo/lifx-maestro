@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -184,6 +185,21 @@ func (a *App) Generate(audioPath string, style string, target string, editorDevi
 		return nil, err
 	}
 	return a.GenerateFromAnalysis(audioPath, result, style, target, editorDevices)
+}
+
+// forceTourEnv shows the walkthrough on demand. Development builds have no
+// analyzer to prepare, so without this the tour would never appear while it is
+// being worked on.
+const forceTourEnv = "LIFX_MAESTRO_FORCE_TOUR"
+
+// AnalyzerPreparing reports whether the bundled analyzer still owes its first
+// run. The UI shows its intro walkthrough while that happens, so the guide and
+// the wait it covers stay coupled: no wait, no interruption.
+func (a *App) AnalyzerPreparing() bool {
+	if os.Getenv(forceTourEnv) != "" {
+		return true
+	}
+	return analyzerbin.NeedsWarmup()
 }
 
 func (a *App) Analyze(audioPath string) (analysis.SongAnalysis, error) {

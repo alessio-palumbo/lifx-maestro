@@ -447,6 +447,54 @@ button {
   min-width: 470px;
 }
 
+/* The walkthrough deliberately does not dim or block the app: it points at real
+   controls, so following along by using them should stay possible. */
+.tour-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+}
+
+.tour-ring {
+  position: fixed;
+  border: 2px solid #35d2ff;
+  border-radius: 8px;
+  box-shadow: 0 0 0 4px rgba(53, 210, 255, 0.16);
+  transition: left 0.18s ease, top 0.18s ease, width 0.18s ease, height 0.18s ease;
+}
+
+.tour-card {
+  position: fixed;
+  display: grid;
+  gap: 6px;
+  width: 300px;
+  padding: 16px;
+  border: 1px solid #384150;
+  border-radius: 8px;
+  background: #191d23;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+  pointer-events: auto;
+}
+
+.tour-progress {
+  color: #6f7b8d;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.tour-card span {
+  color: #9aa5b5;
+}
+
+.tour-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+
 .busy-overlay {
   position: fixed;
   inset: 0;

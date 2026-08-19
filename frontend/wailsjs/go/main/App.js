@@ -6,6 +6,10 @@ export function Analyze(arg1) {
   return window['go']['main']['App']['Analyze'](arg1);
 }
 
+export function AnalyzerPreparing() {
+  return window['go']['main']['App']['AnalyzerPreparing']();
+}
+
 export function AudioDuration(arg1) {
   return window['go']['main']['App']['AudioDuration'](arg1);
 }
