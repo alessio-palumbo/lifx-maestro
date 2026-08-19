@@ -20,11 +20,22 @@ const (
 	stateCaptureRestoreFade = 500 * time.Millisecond
 	stateRestoreAttempts    = 2
 	stateRestoreRetryDelay  = 120 * time.Millisecond
+	// stateSettleWindow is how long a restore is assumed to still be landing on
+	// the device. Capturing inside this window reads back a light that is mid-fade,
+	// or still reporting the colour this app was playing, and would store that as
+	// the user's own state. Restarting a preview quickly used to do exactly that,
+	// leaving the lights on a generated colour once playback finished.
+	stateSettleWindow = 5 * time.Second
 )
 
 type LifxDeviceController struct {
 	controller *controller.Controller
-	snapshots  []stateSnapshot
+	// snapshotMu guards the captured state, which is written by whichever
+	// goroutine starts a preview and read by the one that tears it down.
+	snapshotMu     sync.Mutex
+	snapshots      []stateSnapshot
+	snapshotTarget string
+	restoredAt     time.Time
 }
 
 type stateSnapshot struct {
@@ -143,6 +154,12 @@ func (l *LifxDeviceController) CaptureState(target string) error {
 		return fmt.Errorf("lifx controller is not initialized")
 	}
 
+	// Keep a snapshot we already trust rather than re-reading a light that has not
+	// settled yet.
+	if l.holdsUsableSnapshot(target) {
+		return nil
+	}
+
 	serials, err := l.resolveTarget(target)
 	if err != nil {
 		return err
@@ -176,18 +193,48 @@ func (l *LifxDeviceController) CaptureState(target string) error {
 		return fmt.Errorf("no LIFX device states captured for target %q", target)
 	}
 
+	l.snapshotMu.Lock()
 	l.snapshots = snapshots
+	l.snapshotTarget = target
+	l.restoredAt = time.Time{}
+	l.snapshotMu.Unlock()
 	return nil
 }
 
+// holdsUsableSnapshot reports whether the stored state is still the user's own,
+// rather than something this app put on the lights.
+//
+// A snapshot that has never been restored is by definition the state we found the
+// lights in. One that was restored recently is still being applied, so the device
+// cannot yet report anything better. Only after it has settled is a fresh capture
+// worth doing, since by then the user may have changed the lights themselves.
+func (l *LifxDeviceController) holdsUsableSnapshot(target string) bool {
+	l.snapshotMu.Lock()
+	defer l.snapshotMu.Unlock()
+
+	if len(l.snapshots) == 0 || l.snapshotTarget != target {
+		return false
+	}
+	if l.restoredAt.IsZero() {
+		return true
+	}
+	return time.Since(l.restoredAt) < stateSettleWindow
+}
+
 func (l *LifxDeviceController) RestoreState() error {
-	if l.controller == nil || len(l.snapshots) == 0 {
+	l.snapshotMu.Lock()
+	snapshots := l.snapshots
+	// Stamped before sending so the settle window covers the fade itself.
+	l.restoredAt = time.Now()
+	l.snapshotMu.Unlock()
+
+	if l.controller == nil || len(snapshots) == 0 {
 		return nil
 	}
 
 	var wg sync.WaitGroup
-	errs := make(chan error, len(l.snapshots))
-	for _, snapshot := range l.snapshots {
+	errs := make(chan error, len(snapshots))
+	for _, snapshot := range snapshots {
 		snapshot := snapshot
 		wg.Add(1)
 		go func() {
