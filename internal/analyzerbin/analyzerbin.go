@@ -68,7 +68,7 @@ func install() (string, error) {
 
 	// Reuse the installed copy only when it matches this build and survived a
 	// previous extraction intact.
-	if data, err := os.ReadFile(versionFile); err == nil && strings.TrimSpace(string(data)) == Version {
+	if data, err := os.ReadFile(versionFile); err == nil && strings.TrimSpace(string(data)) == Version() {
 		if _, err := os.Stat(exePath); err == nil {
 			return exePath, nil
 		}
@@ -95,7 +95,7 @@ func install() (string, error) {
 	}
 
 	// Stamp last so an interrupted extraction is retried rather than trusted.
-	if err := os.WriteFile(versionFile, []byte(Version), 0o644); err != nil {
+	if err := os.WriteFile(versionFile, []byte(Version()), 0o644); err != nil {
 		return "", fmt.Errorf("record analyzer version: %w", err)
 	}
 	return exePath, nil

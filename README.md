@@ -59,14 +59,17 @@ downloaded apps analyze audio with no Python install and no `pip install` step.
 - Release CI freezes `analyzer/analyze.py` with PyInstaller, smoke tests it, and
   writes the bundle to `internal/analyzerbin/assets/analyzer.zip`.
 - `internal/analyzerbin` embeds that archive and extracts it to
-  `~/.lifx-maestro/analyzer` on first launch, re-extracting whenever
-  `analyzerbin.Version` changes.
+  `~/.lifx-maestro/analyzer` on first launch, re-extracting whenever the bundle's
+  contents change. The installed copy is identified by a hash of the embedded
+  archive, so a changed analyzer always replaces it and there is nothing to bump
+  by hand.
 - The repository commits a 22-byte placeholder archive in its place, so
   development builds stay small and fall back to a local Python interpreter plus
   `analyzer/analyze.py`.
 
-Bump `Version` in `internal/analyzerbin/version.go` whenever `analyze.py` or its
-dependencies change, otherwise existing installs keep their extracted copy.
+Analyzer dependencies are pinned in `analyzer/requirements.txt` so a release can be
+rebuilt identically. Unpinned, each release froze against whatever pip resolved that
+day, which makes a broken build impossible to bisect against a working one.
 
 To reproduce a bundled build locally, which is the only way to test the packaged
 app without cutting a release:

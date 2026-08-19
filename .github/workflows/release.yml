@@ -95,11 +95,22 @@ jobs:
           PY
 
           if [ "${{ runner.os }}" = "Windows" ]; then
-            ANALYZE=analyzer-dist/analyze/analyze.exe
+            ANALYZE="$PWD/analyzer-dist/analyze/analyze.exe"
           else
-            ANALYZE=analyzer-dist/analyze/analyze
+            ANALYZE="$PWD/analyzer-dist/analyze/analyze"
           fi
-          "$ANALYZE" analyzer-build/smoke.wav | python -c 'import json,sys; json.load(sys.stdin)'
+          SMOKE="$PWD/analyzer-build/smoke.wav"
+
+          "$ANALYZE" "$SMOKE" | python -c 'import json,sys; json.load(sys.stdin)'
+
+          # Also run from the filesystem root. An app launched from Finder inherits
+          # "/" as its working directory, and a CI-built analyzer has been seen to
+          # segfault there inside numpy while working from every other directory.
+          # The app no longer inherits that directory, but a bundle that dies in it
+          # is not one to ship.
+          if [ "${{ runner.os }}" != "Windows" ]; then
+            (cd / && "$ANALYZE" "$SMOKE") | python -c 'import json,sys; json.load(sys.stdin)'
+          fi
 
       - name: Bundle analyzer for embedding
         if: runner.os != 'Windows'

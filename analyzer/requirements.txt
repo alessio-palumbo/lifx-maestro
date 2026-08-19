@@ -1,3 +1,7 @@
-librosa
-numpy
-soundfile
+# Pinned so a release can be rebuilt identically. These were unpinned, which meant
+# every release froze the analyzer against whatever pip resolved that day: a build
+# that worked could not be reproduced, and a build that broke could not be bisected
+# against a known-good one.
+librosa==1.0.0
+numpy==2.5.2
+soundfile==0.14.0

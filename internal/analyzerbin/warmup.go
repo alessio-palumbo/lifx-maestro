@@ -34,7 +34,7 @@ func NeedsWarmup() bool {
 		return false
 	}
 	data, err := os.ReadFile(warmFilePath(baseDir))
-	return err != nil || strings.TrimSpace(string(data)) != Version
+	return err != nil || strings.TrimSpace(string(data)) != Version()
 }
 
 // Warm runs one throwaway analysis so the user's first real analysis does not
@@ -65,7 +65,7 @@ func MarkWarm() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(warmFilePath(baseDir), []byte(Version), 0o644)
+	return os.WriteFile(warmFilePath(baseDir), []byte(Version()), 0o644)
 }
 
 func warmFilePath(baseDir string) string {
