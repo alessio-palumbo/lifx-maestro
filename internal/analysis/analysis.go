@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -63,10 +64,25 @@ func (a Analyzer) Analyze(ctx context.Context, audioPath string) (*SongAnalysis,
 		a.Timeout = 2 * time.Minute
 	}
 
+	// Resolve the path before choosing the child's directory below, or a relative
+	// path from the command line would stop resolving.
+	audioPath, err := filepath.Abs(audioPath)
+	if err != nil {
+		return nil, fmt.Errorf("resolve audio path: %w", err)
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, a.Timeout)
 	defer cancel()
 
 	cmd := a.command(ctx, audioPath)
+	// Run from a directory of our choosing rather than inheriting the launcher's.
+	// An app started from Finder inherits "/", and the frozen analyzer has been
+	// seen to die there with a segmentation fault inside numpy — a null function
+	// pointer in its ufunc machinery. The CLI never hit it because a shell always
+	// supplies a normal directory. Nothing about the analyzer wants the caller's
+	// directory: it finds its own libraries from the executable path, and the audio
+	// path above is absolute.
+	cmd.Dir = os.TempDir()
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
