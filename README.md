@@ -68,22 +68,23 @@ downloaded apps analyze audio with no Python install and no `pip install` step.
 Bump `Version` in `internal/analyzerbin/version.go` whenever `analyze.py` or its
 dependencies change, otherwise existing installs keep their extracted copy.
 
-To reproduce a bundled build locally:
+To reproduce a bundled build locally, which is the only way to test the packaged
+app without cutting a release:
 
 ```bash
 analyzer/.venv/bin/python -m pip install pyinstaller
-analyzer/.venv/bin/pyinstaller --noconfirm --clean --onedir --name analyze \
-  --distpath analyzer-dist --workpath analyzer-build --specpath analyzer-build \
-  --collect-all librosa --collect-all lazy_loader --collect-all soxr \
-  --collect-all soundfile --collect-all audioread --collect-all numba \
-  --collect-all llvmlite --collect-submodules sklearn \
-  analyzer/analyze.py
-rm -f internal/analyzerbin/assets/analyzer.zip
-(cd analyzer-dist && zip -qry ../internal/analyzerbin/assets/analyzer.zip analyze)
+scripts/bundle-analyzer.sh          # freeze, smoke test, embed
+wails build                          # package the app
+git checkout internal/analyzerbin/assets/analyzer.zip   # restore the placeholder
 ```
 
-Restore the placeholder with `git checkout internal/analyzerbin/assets/analyzer.zip`
-when you are done, so the bundle is never committed.
+Run the script rather than the steps by hand. Freezing without embedding leaves the
+placeholder in place, and the app then falls back to a local Python interpreter: it
+behaves like a development build while appearing to work, because a venv is present.
+
+The tell is the first-run walkthrough. It only shows when a real analyzer is
+bundled, so if a supposedly packaged build shows no walkthrough, it is running the
+placeholder.
 
 ## Quick Start
 

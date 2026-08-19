@@ -131,8 +131,11 @@ jobs:
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
 
       - name: Build app
+        shell: bash
         run: |
-          wails build ${{ runner.os == 'Linux' && '-tags webkit2_41' || '' }}
+          # The version shows in the window title, so a screenshot identifies the build.
+          wails build ${{ runner.os == 'Linux' && '-tags webkit2_41' || '' }} \
+            -ldflags "-X main.version=${GITHUB_REF_NAME#v}"
 
       - name: Package macOS app
         if: runner.os == 'macOS'
