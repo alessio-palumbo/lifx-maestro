@@ -26,14 +26,18 @@ type SupportedDeviceKinds struct {
 }
 
 type EffectIntent struct {
-	Kind        IntentKind
-	TimeMS      int64
-	Target      string
-	Color       palette.Color
-	Palette     palette.Palette
-	Brightness  float64
-	DurationMS  int64
-	BeatIndex   int
+	Kind       IntentKind
+	TimeMS     int64
+	Target     string
+	Color      palette.Color
+	Palette    palette.Palette
+	Brightness float64
+	DurationMS int64
+	BeatIndex  int
+	// Phase is where this event sits inside its beat, from 0 at the hit to just
+	// under 1 at the end. Spatial effects add it to BeatIndex so a surface keeps
+	// moving between beats instead of stepping once per beat and holding.
+	Phase       float64
 	Section     string
 	DeviceIndex int
 	DeviceTotal int

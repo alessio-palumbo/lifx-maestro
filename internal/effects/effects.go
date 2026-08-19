@@ -84,14 +84,14 @@ func (Breathing) Generate(ctx Context) []timeline.Event {
 		// only in overall brightness.
 		stepIndex := int((t - ctx.Section.StartMS) / step)
 		target := targetAt(ctx.Targets, stepIndex)
-		events = append(events, render(t, target, rendering.IntentGradient, ctx.Palette.Primary(), brightness, ctx.DurationMS*3, stepIndex, ctx)...)
+		events = append(events, render(t, target, rendering.IntentGradient, ctx.Palette.Primary(), brightness, ctx.DurationMS*3, stepIndex, 0, ctx)...)
 	}
 	return events
 }
 
 func (Fade) Generate(ctx Context) []timeline.Event {
 	target := targetAt(ctx.Targets, 0)
-	return render(ctx.Section.StartMS, target, rendering.IntentGradient, ctx.Palette.Secondary(), smoothBrightness(ctx.Section.Energy, ctx.MinBright, ctx.MaxBright)*0.7, ctx.DurationMS*4, 0, ctx)
+	return render(ctx.Section.StartMS, target, rendering.IntentGradient, ctx.Palette.Secondary(), smoothBrightness(ctx.Section.Energy, ctx.MinBright, ctx.MaxBright)*0.7, ctx.DurationMS*4, 0, 0, ctx)
 }
 
 func pulseEvents(ctx Context, kind rendering.IntentKind, colors []palette.Color) []timeline.Event {
@@ -115,9 +115,9 @@ func pulseEvents(ctx Context, kind rendering.IntentKind, colors []palette.Color)
 			target := targetAt(ctx.Targets, beatIndex+ctx.TargetShift+targetIndex)
 			targetColor := colors[(beatIndex/step+targetIndex)%len(colors)]
 
-			events = append(events, render(beat, target, kind, targetColor, envelope.peak, envelope.riseMS, beatIndex+targetIndex, ctx)...)
+			events = append(events, render(beat, target, kind, targetColor, envelope.peak, envelope.riseMS, beatIndex+targetIndex, envelope.phaseAtHit(), ctx)...)
 			if envelope.decays() {
-				events = append(events, render(beat+envelope.riseMS, target, kind, targetColor, envelope.rest, envelope.fallMS, beatIndex+targetIndex, ctx)...)
+				events = append(events, render(beat+envelope.riseMS, target, kind, targetColor, envelope.rest, envelope.fallMS, beatIndex+targetIndex, envelope.phaseAtFall(), ctx)...)
 			}
 		}
 	}
@@ -158,6 +158,19 @@ type envelope struct {
 	rest   float64
 	riseMS int64
 	fallMS int64
+}
+
+// phaseAtHit and phaseAtFall report where each half of the envelope sits inside
+// the beat, so spatial effects can keep travelling between beats rather than
+// drawing the decay at exactly the position of the hit.
+func (e envelope) phaseAtHit() float64 { return 0 }
+
+func (e envelope) phaseAtFall() float64 {
+	total := e.riseMS + e.fallMS
+	if total <= 0 {
+		return 0
+	}
+	return float64(e.riseMS) / float64(total)
 }
 
 // decays reports whether the fall is worth its own event. Skipped when the two
@@ -219,7 +232,7 @@ func targetsPerBeat(targets []Target) []int {
 	return out
 }
 
-func render(timeMS int64, target Target, kind rendering.IntentKind, color palette.Color, brightness float64, durationMS int64, beatIndex int, ctx Context) []timeline.Event {
+func render(timeMS int64, target Target, kind rendering.IntentKind, color palette.Color, brightness float64, durationMS int64, beatIndex int, phase float64, ctx Context) []timeline.Event {
 	return rendering.Render(rendering.EffectIntent{
 		Kind:        kind,
 		TimeMS:      timeMS,
@@ -229,6 +242,7 @@ func render(timeMS int64, target Target, kind rendering.IntentKind, color palett
 		Brightness:  brightness,
 		DurationMS:  durationMS,
 		BeatIndex:   beatIndex,
+		Phase:       phase,
 		Section:     string(ctx.Section.Type),
 		DeviceIndex: target.Index,
 		DeviceTotal: target.Total,

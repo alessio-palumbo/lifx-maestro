@@ -405,3 +405,96 @@ func testIntent(kind IntentKind) EffectIntent {
 		Supported:  SupportedDeviceKinds{SingleZone: true, MultiZone: true, Matrix: true},
 	}
 }
+
+// A beat's decay must be drawn further along the strip than its hit. Sharing one
+// position made the light hang in place for the length of each beat.
+func TestRenderMultiZonePulseMovesWithinABeat(t *testing.T) {
+	device := devices.DeviceInfo{
+		ID: "strip",
+		Capabilities: devices.DeviceCapabilities{
+			Kind: devices.DeviceKindMultiZone,
+			Surface: lifxdevice.Surface{
+				LightType: lifxdevice.LightTypeMultiZone,
+				Zones:     16,
+			},
+		},
+	}
+
+	hit := testIntent(IntentPulse)
+	hit.BeatIndex = 1
+	hit.Phase = 0
+
+	decay := hit
+	decay.Phase = 0.5
+
+	if sameLevels(zoneLevels(t, device, hit), zoneLevels(t, device, decay)) {
+		t.Fatal("the decay is drawn at the same position as the hit; the phase is unused")
+	}
+}
+
+// A travelling effect should cross the surface in a fixed musical time, so a long
+// strip does not crawl.
+func TestMultiZonePulseCrossesTheStripInABar(t *testing.T) {
+	const zones = 16
+	start := headPosition(EffectIntent{BeatIndex: 0}, zones, beatsPerTraversal)
+	afterABar := headPosition(EffectIntent{BeatIndex: beatsPerTraversal}, zones, beatsPerTraversal)
+
+	if travelled := afterABar - start; travelled < float64(zones) {
+		t.Fatalf("head travelled %.1f zones in a bar, want the full %d", travelled, zones)
+	}
+}
+
+func zoneLevels(t *testing.T, device devices.DeviceInfo, intent EffectIntent) []float64 {
+	t.Helper()
+	events := Render(intent, device)
+	if len(events) == 0 {
+		t.Fatal("no events rendered")
+	}
+	var params timeline.SetZoneColorsParams
+	if err := json.Unmarshal(events[0].Params, &params); err != nil {
+		t.Fatal(err)
+	}
+	levels := make([]float64, 0, len(params.Zones))
+	for _, zone := range params.Zones {
+		levels = append(levels, zone.Color.Brightness)
+	}
+	return levels
+}
+
+// The complaint this guards: a lit band or head over a single flat background left
+// most of the strip holding one hue, which read as boring even while the head moved.
+func TestRenderMultiZoneDoesNotLeaveTheStripOnOneHue(t *testing.T) {
+	device := devices.DeviceInfo{
+		ID: "strip",
+		Capabilities: devices.DeviceCapabilities{
+			Kind: devices.DeviceKindMultiZone,
+			Surface: lifxdevice.Surface{
+				LightType: lifxdevice.LightTypeMultiZone,
+				Zones:     16,
+			},
+		},
+	}
+
+	for _, kind := range []IntentKind{IntentPulse, IntentSweep} {
+		intent := testIntent(kind)
+		intent.BeatIndex = 3
+
+		hues := map[float64]int{}
+		for _, hue := range zoneHues(t, device, kind, intent.BeatIndex) {
+			hues[hue]++
+		}
+
+		most := 0
+		for _, count := range hues {
+			if count > most {
+				most = count
+			}
+		}
+		if most > 8 {
+			t.Fatalf("%s: %d of 16 zones share one hue; the strip is mostly a flat base colour", kind, most)
+		}
+		if len(hues) < 4 {
+			t.Fatalf("%s: only %d hues across the strip", kind, len(hues))
+		}
+	}
+}
