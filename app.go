@@ -103,10 +103,17 @@ func (a *App) startup(ctx context.Context) {
 	go func() {
 		_, _ = a.lifxController()
 	}()
-	// Unpack the bundled analyzer up front so the first analysis does not pay
-	// for extraction. Analyze reports any failure when it retries.
+	// Unpack and run the bundled analyzer up front so the user's first analysis
+	// does not pay for either. Extraction takes about a second; the first run
+	// costs far more, because the OS verifies every library in the bundle and the
+	// analyzer compiles its hot paths. Analyze reports any failure when it
+	// retries, so failures here are silent by design.
 	go func() {
-		_, _ = analyzerbin.EnsureInstalled()
+		exePath, err := analyzerbin.EnsureInstalled()
+		if err != nil || !analyzerbin.NeedsWarmup() {
+			return
+		}
+		_ = analyzerbin.Warm(a.ctx, exePath)
 	}()
 }
 
