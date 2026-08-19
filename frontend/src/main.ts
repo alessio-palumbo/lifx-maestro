@@ -1,6 +1,6 @@
 import './style.css';
 
-import { Analyze, AnalyzerPreparing, AudioDuration, ChooseAudioFile, ChooseTimelineSavePath, DiscoverDevices, GenerateFromAnalysis, PausePreview, ResumePreview, SaveTimeline, StartAudioPreview, StartPreview, StopPreview, Styles } from '../wailsjs/go/main/App';
+import { Analyze, AnalyzerPreparing, AudioDuration, ChooseAudioFile, ChooseTimelineSavePath, DiscoverDevices, GenerateFromAnalysis, MasterBrightness, PausePreview, ResumePreview, SaveTimeline, SetMasterBrightness, StartAudioPreview, StartPreview, StopPreview, Styles } from '../wailsjs/go/main/App';
 
 // The walkthrough only appears while the bundled analyzer is preparing itself,
 // which is the one moment there is a wait worth filling. Set LIFX_MAESTRO_FORCE_TOUR
@@ -130,6 +130,9 @@ type AppState = {
   loading: boolean;
   // Index into TOUR_STEPS, or null when the walkthrough is not showing.
   tourStep: number | null;
+  // Output level as a percentage. Applied while playing, so it never invalidates
+  // a generated timeline.
+  masterBrightness: number;
   previewStarting: boolean;
   needsRegeneration: boolean;
   regenerationReasons: {
@@ -161,6 +164,7 @@ const state: AppState = {
   status: 'Loading editor',
   loading: false,
   tourStep: null,
+  masterBrightness: 100,
   previewStarting: false,
   needsRegeneration: false,
   regenerationReasons: {
@@ -205,6 +209,11 @@ async function analyzerPreparing() {
 
 async function bootstrap() {
   state.tourStep = (await analyzerPreparing()) ? 0 : null;
+  try {
+    state.masterBrightness = await MasterBrightness();
+  } catch {
+    state.masterBrightness = 100;
+  }
   try {
     state.styles = await Styles();
     state.status = 'Discovering LIFX LAN devices';
@@ -264,6 +273,13 @@ function renderToolbar() {
         <div class="timecode">${formatTime(state.playheadMS)} / ${formatTime(session ? playbackDurationMS(session) : 0)}</div>
       </div>
       <div class="actions">
+        <label class="field">
+          <span>Brightness</span>
+          <span class="brightness-field">
+            <input id="master-brightness" class="brightness-slider" type="range" min="5" max="100" step="5" value="${state.masterBrightness}" />
+            <span class="brightness-value">${Math.round(state.masterBrightness)}%</span>
+          </span>
+        </label>
         <label class="field">
           <span>Style</span>
           <select id="style" class="select-control">${styleOptions}</select>
@@ -716,6 +732,15 @@ function bindEvents() {
   document.querySelector('#toggle-inspector')?.addEventListener('click', () => {
     state.inspectorOpen = !state.inspectorOpen;
     render();
+  });
+  document.querySelector('#master-brightness')?.addEventListener('input', (event) => {
+    const percent = Number((event.target as HTMLInputElement).value);
+    state.masterBrightness = percent;
+    const readout = document.querySelector<HTMLElement>('.brightness-value');
+    if (readout) {
+      readout.textContent = `${Math.round(percent)}%`;
+    }
+    void SetMasterBrightness(percent);
   });
   document.querySelector('#tour-next')?.addEventListener('click', advanceTour);
   document.querySelector('#tour-skip')?.addEventListener('click', endTour);

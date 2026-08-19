@@ -447,6 +447,26 @@ button {
   min-width: 470px;
 }
 
+/* Master output level. Applied during playback, so it is a live fader rather than
+   a generation setting, and moving it never marks the timeline stale. */
+.brightness-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.brightness-slider {
+  width: 96px;
+  accent-color: #35d2ff;
+}
+
+.brightness-value {
+  min-width: 34px;
+  color: #9aa5b5;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
 /* The walkthrough deliberately does not dim or block the app: it points at real
    controls, so following along by using them should stay possible. */
 .tour-layer {

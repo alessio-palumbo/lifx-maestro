@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"lifx-maestro/internal/devices"
@@ -19,15 +21,54 @@ type Options struct {
 	Verbose    bool
 	Out        io.Writer
 	ClockLabel string
+	// MasterBrightness scales every colour this player sends, as a factor from 0
+	// to 1. Zero means unset and is treated as full.
+	MasterBrightness float64
 }
 
 type Player struct {
 	controller devices.DeviceController
 	options    Options
+	// master holds the brightness factor as float64 bits so it can be changed
+	// while playing without locking the dispatch path.
+	master atomic.Uint64
 }
 
 func NewPlayer(controller devices.DeviceController, options Options) *Player {
-	return &Player{controller: controller, options: options}
+	player := &Player{controller: controller, options: options}
+	scale := options.MasterBrightness
+	if scale <= 0 {
+		scale = 1
+	}
+	player.SetMasterBrightness(scale)
+	return player
+}
+
+// SetMasterBrightness scales every colour sent from the next event onwards. It is
+// safe to call while playing, which is the point: the timeline keeps its own
+// dynamics and only the output level moves, so nothing has to be regenerated.
+func (p *Player) SetMasterBrightness(scale float64) {
+	p.master.Store(math.Float64bits(clampScale(scale)))
+}
+
+func (p *Player) MasterBrightness() float64 {
+	return math.Float64frombits(p.master.Load())
+}
+
+// scaleBrightness applies the master factor to a 0-100 brightness. It keeps the
+// existing floor, so a dimmed show stays visible rather than switching lights off.
+func (p *Player) scaleBrightness(percent float64) float64 {
+	return minBrightness(percent * p.MasterBrightness())
+}
+
+func clampScale(scale float64) float64 {
+	if scale < 0 {
+		return 0
+	}
+	if scale > 1 {
+		return 1
+	}
+	return scale
 }
 
 func (p *Player) Play(ctx context.Context, tl *timeline.Timeline) error {
@@ -129,17 +170,24 @@ func (p *Player) execute(scheduled scheduler.Event) error {
 		if err != nil {
 			return fmt.Errorf("event %d: %w", scheduled.Index, err)
 		}
+		params.Brightness = p.scaleBrightness(params.Brightness)
 		return p.controller.SetColor(event.Target, params)
 	case "set_zone_colors":
 		params, err := zoneColorParams(event.Params)
 		if err != nil {
 			return fmt.Errorf("event %d: %w", scheduled.Index, err)
 		}
+		for i := range params.zones {
+			params.zones[i].Brightness = p.scaleBrightness(params.zones[i].Brightness)
+		}
 		return p.controller.SetZoneColors(event.Target, params.zones, params.durationMS)
 	case "set_matrix_colors":
 		params, err := matrixColorParams(event.Params)
 		if err != nil {
 			return fmt.Errorf("event %d: %w", scheduled.Index, err)
+		}
+		for i := range params.pixels {
+			params.pixels[i].Brightness = p.scaleBrightness(params.pixels[i].Brightness)
 		}
 		return p.controller.SetMatrixColors(event.Target, params.pixels, params.width, params.height, params.durationMS)
 	default:

@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -27,8 +29,48 @@ type App struct {
 	previewStop  context.CancelFunc
 	previewAudio *audio.BeepPlayer
 	previewLifx  *devices.LifxDeviceController
+	previewLight *playback.Player
 	lifxMu       sync.Mutex
 	lifx         *devices.LifxDeviceController
+	// masterBrightness survives between previews so the setting sticks, and is
+	// pushed to the running player so the fader takes effect mid-song.
+	masterBrightness atomic.Uint64
+}
+
+// masterBrightnessScale reports the fader position as a 0-1 factor, defaulting to
+// full for a freshly started app.
+func (a *App) masterBrightnessScale() float64 {
+	bits := a.masterBrightness.Load()
+	if bits == 0 {
+		return 1
+	}
+	return math.Float64frombits(bits)
+}
+
+// SetMasterBrightness scales the output of the running show, as a percentage. The
+// timeline is untouched, so its dynamics survive and nothing is regenerated.
+func (a *App) SetMasterBrightness(percent float64) {
+	scale := percent / 100
+	if scale < 0 {
+		scale = 0
+	}
+	if scale > 1 {
+		scale = 1
+	}
+	a.masterBrightness.Store(math.Float64bits(scale))
+
+	a.previewMu.Lock()
+	player := a.previewLight
+	a.previewMu.Unlock()
+	if player != nil {
+		player.SetMasterBrightness(scale)
+	}
+}
+
+// MasterBrightness reports the fader position as a percentage, so the UI can show
+// the stored value rather than assuming one.
+func (a *App) MasterBrightness() float64 {
+	return a.masterBrightnessScale() * 100
 }
 
 type EditorSession struct {
@@ -283,12 +325,16 @@ func (a *App) StartPreview(request PreviewRequest) error {
 	}
 
 	ctx, cancel := context.WithCancel(a.ctx)
-	lightingPlayer := playback.NewPlayer(controller, playback.Options{ClockLabel: "audio"})
+	lightingPlayer := playback.NewPlayer(controller, playback.Options{
+		ClockLabel:       "audio",
+		MasterBrightness: a.masterBrightnessScale(),
+	})
 
 	a.previewMu.Lock()
 	a.previewStop = cancel
 	a.previewAudio = audioPlayer
 	a.previewLifx = controller
+	a.previewLight = lightingPlayer
 	a.previewMu.Unlock()
 
 	go func() {
@@ -327,6 +373,7 @@ func (a *App) StartAudioPreview(audioPath string) error {
 	a.previewStop = cancel
 	a.previewAudio = audioPlayer
 	a.previewLifx = nil
+	a.previewLight = nil
 	a.previewMu.Unlock()
 
 	go func() {
@@ -352,6 +399,7 @@ func (a *App) StopPreview() {
 	a.previewStop = nil
 	a.previewAudio = nil
 	a.previewLifx = nil
+	a.previewLight = nil
 	a.previewMu.Unlock()
 
 	if cancel != nil {
@@ -391,6 +439,7 @@ func (a *App) clearPreview(controller *devices.LifxDeviceController) {
 		a.previewStop = nil
 		a.previewAudio = nil
 		a.previewLifx = nil
+		a.previewLight = nil
 	}
 }
 

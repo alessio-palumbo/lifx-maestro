@@ -34,6 +34,10 @@ export function GenerateFromAnalysis(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['main']['App']['GenerateFromAnalysis'](arg1, arg2, arg3, arg4, arg5);
 }
 
+export function MasterBrightness() {
+  return window['go']['main']['App']['MasterBrightness']();
+}
+
 export function PausePreview() {
   return window['go']['main']['App']['PausePreview']();
 }
@@ -44,6 +48,10 @@ export function ResumePreview() {
 
 export function SaveTimeline(arg1) {
   return window['go']['main']['App']['SaveTimeline'](arg1);
+}
+
+export function SetMasterBrightness(arg1) {
+  return window['go']['main']['App']['SetMasterBrightness'](arg1);
 }
 
 export function StartAudioPreview(arg1) {
