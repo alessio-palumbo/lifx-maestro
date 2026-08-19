@@ -180,7 +180,6 @@ const state: AppState = {
 
 let playTimer: number | undefined;
 let playbackStartedAt = 0;
-let audioElement: HTMLAudioElement | null = null;
 
 const appRoot = document.querySelector<HTMLDivElement>('#app');
 if (!appRoot) {
@@ -1023,10 +1022,6 @@ function stopPlayback(shouldRender = true) {
     window.clearInterval(playTimer);
     playTimer = undefined;
   }
-  if (audioElement) {
-    audioElement.pause();
-    audioElement.currentTime = 0;
-  }
   void StopPreview();
   state.status = 'Preview stopped';
   if (shouldRender) {
@@ -1042,7 +1037,6 @@ async function pausePlayback() {
     window.clearInterval(playTimer);
     playTimer = undefined;
   }
-  audioElement?.pause();
   state.status = 'Pausing preview';
   updateTransport();
   try {
@@ -1069,7 +1063,6 @@ async function resumePlayback() {
     render();
     return;
   }
-  audioElement?.play().catch(() => undefined);
   state.previewPaused = false;
   state.previewStarting = false;
   const session = state.session;
@@ -1098,30 +1091,6 @@ function startPlaybackTimer(session: EditorSession) {
     }
     updateTransport();
   }, 50);
-}
-
-function ensureAudioElement() {
-  const path = selectedSongPath();
-  if (!path || state.session?.source === 'demo') {
-    audioElement = null;
-    return null;
-  }
-  const src = pathToFileURL(path);
-  if (!audioElement || audioElement.src !== src) {
-    audioElement = new Audio(src);
-    audioElement.preload = 'auto';
-    audioElement.addEventListener('ended', () => stopPlayback());
-    audioElement.addEventListener('loadedmetadata', () => {
-      if (state.session && state.session.source === 'selected' && Number.isFinite(audioElement?.duration ?? NaN)) {
-        const durationMS = Math.round((audioElement?.duration ?? 0) * 1000);
-        state.session.timeline.duration_ms = durationMS;
-        state.session.analysis.duration_ms = durationMS;
-        state.session.summary.duration_ms = durationMS;
-        render();
-      }
-    });
-  }
-  return audioElement;
 }
 
 function updateTransport() {
@@ -1154,9 +1123,6 @@ function isGeneratedTimeline(session: EditorSession) {
 function playbackDurationMS(session: EditorSession) {
   if (session.timeline.duration_ms > 0) {
     return session.timeline.duration_ms;
-  }
-  if (audioElement && Number.isFinite(audioElement.duration)) {
-    return Math.round(audioElement.duration * 1000);
   }
   return 0;
 }
@@ -1523,12 +1489,6 @@ function overviewSubtitle(session: EditorSession) {
 
 function fileName(path: string) {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
-}
-
-function pathToFileURL(path: string) {
-  const normalized = path.replace(/\\/g, '/');
-  const prefixed = normalized.startsWith('/') ? normalized : `/${normalized}`;
-  return `file://${prefixed.split('/').map(encodeURIComponent).join('/')}`;
 }
 
 function bindInspectorResize() {
