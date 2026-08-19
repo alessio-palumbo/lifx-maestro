@@ -79,8 +79,12 @@ func (Breathing) Generate(ctx Context) []timeline.Event {
 	for t := ctx.Section.StartMS; t < ctx.Section.EndMS; t += step {
 		energy := energyAt(ctx.Energy, t, ctx.Section.Energy)
 		brightness := smoothBrightness(energy, ctx.MinBright, ctx.MaxBright) * 0.82
-		target := targetAt(ctx.Targets, int((t-ctx.Section.StartMS)/step))
-		events = append(events, render(t, target, rendering.IntentGradient, ctx.Palette.Primary(), brightness, ctx.DurationMS*3, 0, ctx)...)
+		// The step index doubles as the beat index so strips and tiles drift their
+		// gradient along. Passing a constant left those surfaces frozen, changing
+		// only in overall brightness.
+		stepIndex := int((t - ctx.Section.StartMS) / step)
+		target := targetAt(ctx.Targets, stepIndex)
+		events = append(events, render(t, target, rendering.IntentGradient, ctx.Palette.Primary(), brightness, ctx.DurationMS*3, stepIndex, ctx)...)
 	}
 	return events
 }

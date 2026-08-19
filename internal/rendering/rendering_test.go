@@ -2,6 +2,7 @@ package rendering
 
 import (
 	"encoding/json"
+	"math"
 	"testing"
 
 	lifxdevice "github.com/alessio-palumbo/lifxlan-go/pkg/device"
@@ -95,35 +96,60 @@ func TestRenderMatrixCreatesMatrixColors(t *testing.T) {
 	}
 }
 
-func TestRenderMatrixPulseUsesRadialAccentFrame(t *testing.T) {
-	intent := testIntent(IntentPulse)
-	events := Render(intent, devices.DeviceInfo{
+func TestRenderMatrixPulseRingTravelsOutwards(t *testing.T) {
+	device := devices.DeviceInfo{
 		ID: "tile",
 		Capabilities: devices.DeviceCapabilities{
 			Kind:         devices.DeviceKindMatrix,
-			MatrixWidth:  3,
-			MatrixHeight: 3,
+			MatrixWidth:  8,
+			MatrixHeight: 8,
 		},
-	})
-
-	var params timeline.SetMatrixColorsParams
-	if err := json.Unmarshal(events[0].Params, &params); err != nil {
-		t.Fatal(err)
 	}
-	var accentPixel *timeline.MatrixColorParams
-	for i := range params.Pixels {
-		if params.Pixels[i].X == 0 && params.Pixels[i].Y == 0 {
-			accentPixel = &params.Pixels[i]
-			break
+
+	litByBeat := make([]map[[2]int]bool, 0, 3)
+	for beat := 0; beat < 3; beat++ {
+		intent := testIntent(IntentPulse)
+		intent.BeatIndex = beat
+
+		var params timeline.SetMatrixColorsParams
+		if err := json.Unmarshal(Render(intent, device)[0].Params, &params); err != nil {
+			t.Fatal(err)
+		}
+
+		brightest := 0.0
+		for _, pixel := range params.Pixels {
+			brightest = math.Max(brightest, pixel.Color.Brightness)
+		}
+		lit := make(map[[2]int]bool)
+		for _, pixel := range params.Pixels {
+			if pixel.Color.Brightness > brightest*0.6 {
+				lit[[2]int{pixel.X, pixel.Y}] = true
+			}
+		}
+		if len(lit) == 0 || len(lit) == len(params.Pixels) {
+			t.Fatalf("beat %d lit %d of %d pixels; the ring should light some but not all", beat, len(lit), len(params.Pixels))
+		}
+		litByBeat = append(litByBeat, lit)
+	}
+
+	// The ring has to move, otherwise the tile shows fixed concentric stripes.
+	for beat := 1; beat < len(litByBeat); beat++ {
+		if sameLitPixels(litByBeat[beat-1], litByBeat[beat]) {
+			t.Fatalf("beats %d and %d light identical pixels; the ring is not expanding", beat-1, beat)
 		}
 	}
-	if accentPixel == nil {
-		t.Fatal("accent pixel not found")
+}
+
+func sameLitPixels(a, b map[[2]int]bool) bool {
+	if len(a) != len(b) {
+		return false
 	}
-	wantHue := intent.Palette.AccentForBeat(intent.BeatIndex).Hue
-	if accentPixel.Color.Hue != wantHue {
-		t.Fatalf("accent pixel hue = %.1f, want accent hue %.1f", accentPixel.Color.Hue, wantHue)
+	for key := range a {
+		if !b[key] {
+			return false
+		}
 	}
+	return true
 }
 
 func TestRenderMultiZoneUsesSurfaceZones(t *testing.T) {
@@ -152,36 +178,139 @@ func TestRenderMultiZoneUsesSurfaceZones(t *testing.T) {
 	}
 }
 
-func TestRenderMultiZoneSweepUsesBeatIndexedAccent(t *testing.T) {
-	events := Render(testIntent(IntentSweep), devices.DeviceInfo{
+func TestRenderMultiZoneSweepLightsABandThatMoves(t *testing.T) {
+	device := devices.DeviceInfo{
 		ID: "strip",
 		Capabilities: devices.DeviceCapabilities{
 			Kind: devices.DeviceKindMultiZone,
 			Surface: lifxdevice.Surface{
 				LightType: lifxdevice.LightTypeMultiZone,
-				Zones:     5,
+				Zones:     12,
 			},
 		},
-	})
+	}
 
+	first := zoneBrightness(t, device, IntentSweep, 1)
+	second := zoneBrightness(t, device, IntentSweep, 2)
+
+	// A sweep is a band, not the single dot the previous implementation lit.
+	brightest := 0.0
+	for _, level := range first {
+		brightest = math.Max(brightest, level)
+	}
+	var lit int
+	for _, level := range first {
+		if level > brightest*0.6 {
+			lit++
+		}
+	}
+	if lit < 2 {
+		t.Fatalf("sweep lit %d zones, want a band of at least 2", lit)
+	}
+	if lit == len(first) {
+		t.Fatal("sweep lit every zone, so there is no band to see")
+	}
+
+	if sameLevels(first, second) {
+		t.Fatal("sweep did not move between beats")
+	}
+}
+
+// The bug this guards: multizone pulses fell through to a static gradient, so a
+// strip only ever changed brightness and looked frozen.
+func TestRenderMultiZonePulseVariesAcrossZonesAndBeats(t *testing.T) {
+	device := devices.DeviceInfo{
+		ID: "strip",
+		Capabilities: devices.DeviceCapabilities{
+			Kind: devices.DeviceKindMultiZone,
+			Surface: lifxdevice.Surface{
+				LightType: lifxdevice.LightTypeMultiZone,
+				Zones:     12,
+			},
+		},
+	}
+
+	first := zoneBrightness(t, device, IntentPulse, 1)
+	second := zoneBrightness(t, device, IntentPulse, 2)
+
+	if uniformLevels(first) {
+		t.Fatal("every zone has the same brightness; nothing is moving along the strip")
+	}
+	if sameLevels(first, second) {
+		t.Fatal("zone brightness is identical between beats; the pulse is not travelling")
+	}
+}
+
+// Calm sections use gradients rather than a travelling head, but they still must
+// not be frozen.
+func TestRenderMultiZoneGradientDriftsBetweenBeats(t *testing.T) {
+	device := devices.DeviceInfo{
+		ID: "strip",
+		Capabilities: devices.DeviceCapabilities{
+			Kind: devices.DeviceKindMultiZone,
+			Surface: lifxdevice.Surface{
+				LightType: lifxdevice.LightTypeMultiZone,
+				Zones:     12,
+			},
+		},
+	}
+
+	first := zoneHues(t, device, IntentGradient, 0)
+	second := zoneHues(t, device, IntentGradient, 3)
+	if sameLevels(first, second) {
+		t.Fatal("gradient hues are identical between beats; the drift is not applied")
+	}
+}
+
+func zoneBrightness(t *testing.T, device devices.DeviceInfo, kind IntentKind, beatIndex int) []float64 {
+	t.Helper()
+	return zoneValues(t, device, kind, beatIndex, func(c timeline.ColorValue) float64 { return c.Brightness })
+}
+
+func zoneHues(t *testing.T, device devices.DeviceInfo, kind IntentKind, beatIndex int) []float64 {
+	t.Helper()
+	return zoneValues(t, device, kind, beatIndex, func(c timeline.ColorValue) float64 { return c.Hue })
+}
+
+func zoneValues(t *testing.T, device devices.DeviceInfo, kind IntentKind, beatIndex int, pick func(timeline.ColorValue) float64) []float64 {
+	t.Helper()
+	intent := testIntent(kind)
+	intent.BeatIndex = beatIndex
+
+	events := Render(intent, device)
+	if len(events) == 0 {
+		t.Fatal("no events rendered")
+	}
 	var params timeline.SetZoneColorsParams
 	if err := json.Unmarshal(events[0].Params, &params); err != nil {
 		t.Fatal(err)
 	}
-	if len(params.Zones) != 5 {
-		t.Fatalf("zones = %d, want 5", len(params.Zones))
+	values := make([]float64, 0, len(params.Zones))
+	for _, zone := range params.Zones {
+		values = append(values, pick(zone.Color))
 	}
+	return values
+}
 
-	accentIndex := testIntent(IntentSweep).BeatIndex % len(params.Zones)
-	accent := params.Zones[accentIndex].Color
-	for i, zone := range params.Zones {
-		if i == accentIndex {
-			continue
-		}
-		if zone.Color.Hue == accent.Hue {
-			t.Fatalf("zone %d hue %.1f unexpectedly matches accent hue %.1f", i, zone.Color.Hue, accent.Hue)
+func sameLevels(a, b []float64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if math.Abs(a[i]-b[i]) > 0.01 {
+			return false
 		}
 	}
+	return true
+}
+
+func uniformLevels(values []float64) bool {
+	for i := range values {
+		if math.Abs(values[i]-values[0]) > 0.01 {
+			return false
+		}
+	}
+	return true
 }
 
 func TestRenderMatrixUsesAdaptedSurfaceSendDimensions(t *testing.T) {
