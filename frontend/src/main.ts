@@ -133,6 +133,10 @@ type AppState = {
   // Output level as a percentage. Applied while playing, so it never invalidates
   // a generated timeline.
   masterBrightness: number;
+  // Last failure, kept until dismissed or superseded. The busy modal is the only
+  // other place a message appears, and it unmounts the moment work stops, so
+  // errors reported there were never actually readable.
+  error: string | null;
   previewStarting: boolean;
   needsRegeneration: boolean;
   regenerationReasons: {
@@ -165,6 +169,7 @@ const state: AppState = {
   loading: false,
   tourStep: null,
   masterBrightness: 100,
+  error: null,
   previewStarting: false,
   needsRegeneration: false,
   regenerationReasons: {
@@ -224,9 +229,16 @@ async function bootstrap() {
   } catch (error) {
     state.devices = [];
     state.targetTokens = ['all'];
-    state.status = `Device discovery failed: ${readableError(error)}`;
+    reportFailure(`Device discovery failed: ${readableError(error)}`);
   }
   render();
+}
+
+// reportFailure records a failure somewhere that outlives the work that caused it.
+function reportFailure(error: unknown) {
+  const message = readableError(error);
+  state.status = message;
+  state.error = message;
 }
 
 function render() {
@@ -243,6 +255,7 @@ function render() {
         </main>
         ${renderInspector()}
       </div>
+      ${renderError()}
       ${renderOverlay()}
       ${renderTour()}
     </div>
@@ -289,6 +302,18 @@ function renderToolbar() {
         <button id="save" class="tool" ${!session ? 'disabled' : ''}>Save JSON</button>
       </div>
     </header>
+  `;
+}
+
+function renderError() {
+  if (!state.error) {
+    return '';
+  }
+  return `
+    <div class="error-banner" role="alert">
+      <span>${escapeHTML(state.error)}</span>
+      <button id="dismiss-error" class="tool">Dismiss</button>
+    </div>
   `;
 }
 
@@ -733,6 +758,10 @@ function bindEvents() {
     state.inspectorOpen = !state.inspectorOpen;
     render();
   });
+  document.querySelector('#dismiss-error')?.addEventListener('click', () => {
+    state.error = null;
+    render();
+  });
   document.querySelector('#master-brightness')?.addEventListener('input', (event) => {
     const percent = Number((event.target as HTMLInputElement).value);
     state.masterBrightness = percent;
@@ -886,7 +915,7 @@ async function chooseSong() {
     state.targetTokens = splitTarget(state.session.target);
     render();
   } catch (error) {
-    state.status = readableError(error);
+    reportFailure(error);
     render();
   }
 }
@@ -920,7 +949,7 @@ async function discoverDevices() {
       state.status = `Discovered ${discovered.length} LIFX devices`;
     }
   } catch (error) {
-    state.status = readableError(error);
+    reportFailure(error);
   } finally {
     state.loading = false;
     render();
@@ -931,6 +960,7 @@ async function generateForPath(path: string) {
   const style = inputValue('style', state.session?.style ?? 'synthwave');
   const target = targetString();
   stopPlayback(false);
+  state.error = null;
   state.loading = true;
   const existingAnalysis = analysisForPath(path);
   state.status = existingAnalysis ? 'Generating timeline' : 'Analyzing song';
@@ -951,7 +981,7 @@ async function generateForPath(path: string) {
     state.regenerationPrompt = false;
     state.status = 'Generated editable timeline';
   } catch (error) {
-    state.status = readableError(error);
+    reportFailure(error);
   } finally {
     state.loading = false;
     render();
@@ -971,7 +1001,7 @@ async function saveTimeline() {
     await SaveTimeline({ path, timeline: session.timeline } as any);
     state.status = `Saved ${path}`;
   } catch (error) {
-    state.status = readableError(error);
+    reportFailure(error);
   }
   render();
 }
@@ -1015,7 +1045,7 @@ async function togglePlayback() {
       state.playing = false;
       state.previewPaused = false;
       state.previewStarting = false;
-      state.status = readableError(error);
+      reportFailure(error);
       render();
       return;
     }
@@ -1026,7 +1056,7 @@ async function togglePlayback() {
       state.playing = false;
       state.previewPaused = false;
       state.previewStarting = false;
-      state.status = readableError(error);
+      reportFailure(error);
       render();
       return;
     }
@@ -1069,7 +1099,7 @@ async function pausePlayback() {
     state.status = 'Preview paused';
   } catch (error) {
     state.previewPaused = false;
-    state.status = readableError(error);
+    reportFailure(error);
   }
   updateTransport();
 }
@@ -1084,7 +1114,7 @@ async function resumePlayback() {
     state.playing = false;
     state.previewPaused = false;
     state.previewStarting = false;
-    state.status = readableError(error);
+    reportFailure(error);
     render();
     return;
   }

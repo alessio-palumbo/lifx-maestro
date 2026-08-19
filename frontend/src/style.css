@@ -447,6 +447,31 @@ button {
   min-width: 470px;
 }
 
+/* Failures need somewhere that outlives the work that produced them. The busy
+   modal unmounts as soon as loading stops, so anything reported there vanished
+   before it could be read. */
+.error-banner {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 620px;
+  padding: 12px 14px;
+  border: 1px solid #7a3b45;
+  border-radius: 8px;
+  color: #ffdfe3;
+  background: #2a1a1e;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+}
+
+.error-banner span {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+
 /* Master output level. Applied during playback, so it is a live fader rather than
    a generation setting, and moving it never marks the timeline stale. */
 .brightness-field {
