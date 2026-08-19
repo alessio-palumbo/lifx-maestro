@@ -24,7 +24,7 @@ def main():
 
     rms = librosa.feature.rms(y=y, frame_length=2048, hop_length=512)[0]
     rms_times = librosa.frames_to_time(np.arange(len(rms)), sr=sr, hop_length=512)
-    energy = downsample_energy(rms_times, normalize(rms), step_ms=500)
+    energy = normalize_energy_points(downsample_energy(rms_times, rms, step_ms=500))
 
     result = {
         "duration_ms": duration_ms,
@@ -66,7 +66,7 @@ def downsample_energy(times, values, step_ms):
         time_ms = int(round(float(time_s) * 1000))
         while time_ms >= next_ms + step_ms:
             if bucket:
-                points.append({"time_ms": next_ms, "value": round(float(np.mean(bucket)), 4)})
+                points.append({"time_ms": next_ms, "value": float(np.mean(bucket))})
                 bucket = []
             next_ms += step_ms
         bucket.append(float(value))
@@ -74,6 +74,23 @@ def downsample_energy(times, values, step_ms):
     if bucket:
         points.append({"time_ms": next_ms, "value": round(float(np.mean(bucket)), 4)})
 
+    return points
+
+
+def normalize_energy_points(points):
+    """Scale bucket energies so the loudest bucket reads 1.0.
+
+    Normalising per frame before averaging leaves the curve well short of 1.0,
+    because a half-second average is always quieter than the single loudest frame
+    inside it, and by how much depends on the track. Consumers treat these values
+    as a 0-1 loudness, so the scaling has to happen after the averaging.
+    """
+    if not points:
+        return points
+
+    peak = max(point["value"] for point in points)
+    for point in points:
+        point["value"] = round(point["value"] / peak, 4) if peak > 0 else 0.0
     return points
 
 
@@ -224,6 +241,14 @@ def insert_pre_drop_builds(boundaries, duration_ms, energy, tempo):
         beat_ms = int(round(60000 / tempo))
     build_window_ms = clamp_int(beat_ms * 16, 6000, 10000)
 
+    # Gate on the track's own loud range for the same reason as label_sections.
+    curve = [point["value"] for point in energy]
+    if curve:
+        loud_energy = float(np.percentile(curve, 70))
+        rise, _ = relative_deltas(curve)
+    else:
+        loud_energy, rise = 1.0, 1.0
+
     out = [boundaries[0]]
     for i in range(1, len(boundaries) - 1):
         boundary = boundaries[i]
@@ -235,8 +260,8 @@ def insert_pre_drop_builds(boundaries, duration_ms, energy, tempo):
         build_start = boundary - build_window_ms
 
         if (
-            after_energy >= 0.45
-            and after_energy >= before_energy + 0.12
+            after_energy >= loud_energy
+            and after_energy >= before_energy + rise
             and build_start - previous >= 5000
             and boundary - build_start >= 5000
         ):
@@ -252,6 +277,21 @@ def insert_pre_drop_builds(boundaries, duration_ms, energy, tempo):
     return deduped
 
 
+def relative_deltas(values):
+    """Return how much of a change counts as rising or falling for this track.
+
+    Expressed as a fraction of the track's own spread so a narrow-range song
+    still registers its swings, rather than being measured against a constant
+    that only suits loud, dynamic material.
+    """
+    spread = float(np.percentile(values, 90) - np.percentile(values, 10))
+    if spread <= 0:
+        # A flat track has no swings to find. Return a delta nothing can clear so
+        # the comparisons do not fire on equal values.
+        return 1.0, 1.0
+    return spread * 0.35, spread * 0.5
+
+
 def label_sections(boundaries, duration_ms, energy):
     if len(boundaries) < 3:
         return []
@@ -260,8 +300,16 @@ def label_sections(boundaries, duration_ms, energy):
         mean_energy(energy, boundaries[i], boundaries[i + 1])
         for i in range(len(boundaries) - 1)
     ]
-    high_threshold = max(0.55, float(np.percentile(segment_energies, 65)))
-    low_threshold = min(0.35, float(np.percentile(segment_energies, 35)))
+    # Thresholds follow the track's own dynamics. Absolute cutoffs collapsed
+    # quiet and heavily compressed songs into a single label, because the scale of
+    # the energy curve depends on the track: it is per-frame RMS normalised to the
+    # loudest frame and then averaged into half-second buckets, which for most
+    # material peaks well below 1.0. A song peaking at 0.37 could never clear a
+    # fixed 0.55 drop gate, so every section came back "breakdown".
+    high_threshold = float(np.percentile(segment_energies, 65))
+    low_threshold = float(np.percentile(segment_energies, 35))
+    mid_threshold = float(np.median(segment_energies))
+    rise, fall = relative_deltas(segment_energies)
 
     result = []
     for i in range(len(boundaries) - 1):
@@ -277,16 +325,16 @@ def label_sections(boundaries, duration_ms, energy):
             label = "outro"
         elif value >= high_threshold:
             label = "drop"
-        elif next_value >= max(0.45, high_threshold - 0.05) and next_value > value + 0.08:
+        elif next_value >= high_threshold and next_value > value + rise:
             label = "build"
-        elif prev_value >= high_threshold and value <= prev_value - 0.12:
+        elif prev_value >= high_threshold and value <= prev_value - fall:
             label = "breakdown"
         elif value <= low_threshold:
             label = "breakdown"
-        elif next_value > value + 0.06:
+        elif next_value > value + rise * 0.75:
             label = "build"
         else:
-            label = "drop" if value >= 0.48 else "breakdown"
+            label = "drop" if value >= mid_threshold else "breakdown"
 
         result.append({
             "start_ms": start_ms,
