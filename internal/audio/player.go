@@ -54,9 +54,23 @@ func NewBeepPlayer(path string) (*BeepPlayer, error) {
 		return nil, fmt.Errorf("decode audio file: %w", err)
 	}
 
-	if err := initSpeaker(format.SampleRate); err != nil {
+	speakerRate, err := initSpeaker(format.SampleRate)
+	if err != nil {
 		streamer.Close()
 		return nil, err
+	}
+
+	// The speaker runs at one fixed rate for the whole process, so a file that
+	// was encoded at a different rate has to be resampled. Handing it over
+	// unchanged plays it at the wrong speed and pitch: a 48kHz track through a
+	// 44.1kHz speaker runs 8.8% slow, roughly a semitone and a half flat.
+	//
+	// Only playback is resampled. Position and Duration keep reading the original
+	// streamer, so they stay in the file's own timeline and the lighting scheduler
+	// stays aligned with what is audible.
+	playback := beep.Streamer(streamer)
+	if format.SampleRate != speakerRate {
+		playback = beep.Resample(resampleQuality, format.SampleRate, speakerRate, streamer)
 	}
 
 	player := &BeepPlayer{
@@ -65,7 +79,7 @@ func NewBeepPlayer(path string) (*BeepPlayer, error) {
 		done:     make(chan struct{}),
 	}
 	player.ctrl = &beep.Ctrl{
-		Streamer: beep.Seq(streamer, beep.Callback(func() {
+		Streamer: beep.Seq(playback, beep.Callback(func() {
 			player.closeDone()
 		})),
 		Paused: true,
@@ -138,16 +152,29 @@ func (p *BeepPlayer) closeDone() {
 	})
 }
 
-var speakerOnce sync.Once
-var speakerErr error
+// resampleQuality trades CPU for fidelity on a scale beep documents as 1-4.
+const resampleQuality = 4
 
-func initSpeaker(sampleRate beep.SampleRate) error {
+var (
+	speakerOnce sync.Once
+	speakerRate beep.SampleRate
+	speakerErr  error
+)
+
+// initSpeaker opens the output device on first use and reports the rate it runs
+// at. The device cannot be reopened at a different rate later in the process, so
+// callers resample to the rate returned here.
+func initSpeaker(sampleRate beep.SampleRate) (beep.SampleRate, error) {
 	speakerOnce.Do(func() {
 		bufferSize := sampleRate.N(30 * time.Millisecond)
-		speakerErr = speaker.Init(sampleRate, bufferSize)
+		if err := speaker.Init(sampleRate, bufferSize); err != nil {
+			speakerErr = err
+			return
+		}
+		speakerRate = sampleRate
 	})
 	if speakerErr != nil {
-		return fmt.Errorf("initialize speaker: %w", speakerErr)
+		return 0, fmt.Errorf("initialize speaker: %w", speakerErr)
 	}
-	return nil
+	return speakerRate, nil
 }
