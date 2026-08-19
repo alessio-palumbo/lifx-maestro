@@ -89,27 +89,27 @@ func sectionEvents(song analysis.SongAnalysis, section sections.Section, style s
 	switch section.Type {
 	case sections.TypeIntro:
 		events := effects.Breathing{}.Generate(ctx)
-		ctx.BeatStep = maxInt(4, style.PulseEvery)
-		ctx.DurationMS = maxInt64(90, ctx.DurationMS/3)
+		ctx.BeatStep = max(4, style.PulseEvery)
+		ctx.DurationMS = max(90, ctx.DurationMS/3)
 		ctx.MaxBright *= 0.78
 		return append(events, effects.Pulse{}.Generate(ctx)...)
 	case sections.TypeBuild:
 		return effects.AlternatingPulse{}.Generate(ctx)
 	case sections.TypeDrop:
 		ctx.BeatStep = 1
-		ctx.DurationMS = maxInt64(45, ctx.DurationMS/2)
+		ctx.DurationMS = max(45, ctx.DurationMS/2)
 		return effects.Sweep{}.Generate(ctx)
 	case sections.TypeBreakdown:
 		events := effects.Breathing{}.Generate(ctx)
-		ctx.BeatStep = maxInt(2, style.PulseEvery)
-		ctx.DurationMS = maxInt64(120, ctx.DurationMS/4)
+		ctx.BeatStep = max(2, style.PulseEvery)
+		ctx.DurationMS = max(120, ctx.DurationMS/4)
 		ctx.MaxBright *= 0.82
 		return append(events, effects.Pulse{}.Generate(ctx)...)
 	case sections.TypeOutro:
 		events := effects.Breathing{}.Generate(ctx)
 		ctx.MaxBright *= 0.65
-		ctx.BeatStep = maxInt(4, style.PulseEvery)
-		ctx.DurationMS = maxInt64(120, ctx.DurationMS/3)
+		ctx.BeatStep = max(4, style.PulseEvery)
+		ctx.DurationMS = max(120, ctx.DurationMS/3)
 		return append(events, effects.Pulse{}.Generate(ctx)...)
 	default:
 		return effects.Pulse{}.Generate(ctx)
@@ -131,7 +131,7 @@ func transitionEvents(song analysis.SongAnalysis, section sections.Section, styl
 	if pulses == 0 {
 		return nil
 	}
-	durationMS := maxInt64(40, beatMS/4)
+	durationMS := max(40, beatMS/4)
 	brightness := clamp(maxBrightness(section, style)*1.15, 0.18, 1.0)
 	kind := rendering.IntentPulse
 
@@ -191,7 +191,7 @@ func beatDurationMS(bpm float64) int64 {
 	if bpm > 0 {
 		beatMS = int64(60000 / bpm)
 	}
-	return clampInt64(beatMS, 220, 1200)
+	return min(max(beatMS, 220), 1200)
 }
 
 func styleName(options Options) string {
@@ -349,7 +349,7 @@ func effectDuration(bpm float64, section sections.Section, style styles.Style) i
 		duration *= 4.0
 	}
 
-	return maxInt64(45, int64(duration))
+	return max(45, int64(duration))
 }
 
 func clamp(value, min, max float64) float64 {
@@ -360,30 +360,6 @@ func clamp(value, min, max float64) float64 {
 		return max
 	}
 	return value
-}
-
-func maxInt64(a, b int64) int64 {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func clampInt64(value, min, max int64) int64 {
-	if value < min {
-		return min
-	}
-	if value > max {
-		return max
-	}
-	return value
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 func AvailableStyles() []string {
