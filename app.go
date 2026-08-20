@@ -32,6 +32,9 @@ type App struct {
 	previewLight *playback.Player
 	lifxMu       sync.Mutex
 	lifx         *devices.LifxDeviceController
+	// analyzerMu prevents startup warmup and user-triggered analysis from
+	// running the bundled analyzer at the same time on first launch.
+	analyzerMu sync.Mutex
 	// masterBrightness survives between previews so the setting sticks, and is
 	// pushed to the running player so the fader takes effect mid-song.
 	masterBrightness atomic.Uint64
@@ -152,11 +155,7 @@ func (a *App) startup(ctx context.Context) {
 	// analyzer compiles its hot paths. Analyze reports any failure when it
 	// retries, so failures here are silent by design.
 	go func() {
-		exePath, err := analyzerbin.EnsureInstalled()
-		if err != nil || !analyzerbin.NeedsWarmup() {
-			return
-		}
-		_ = analyzerbin.Warm(a.ctx, exePath)
+		_ = a.prepareAnalyzer(a.ctx)
 	}()
 }
 
@@ -252,6 +251,10 @@ func (a *App) Analyze(audioPath string) (analysis.SongAnalysis, error) {
 		return analysis.SongAnalysis{}, err
 	}
 
+	if err := a.prepareAnalyzer(a.ctx); err != nil {
+		return analysis.SongAnalysis{}, fmt.Errorf("prepare analyzer: %w", err)
+	}
+
 	analyzer, err := analyzerbin.NewAnalyzer()
 	if err != nil {
 		return analysis.SongAnalysis{}, fmt.Errorf("prepare analyzer: %w", err)
@@ -261,6 +264,24 @@ func (a *App) Analyze(audioPath string) (analysis.SongAnalysis, error) {
 		return analysis.SongAnalysis{}, err
 	}
 	return *result, nil
+}
+
+func (a *App) prepareAnalyzer(ctx context.Context) error {
+	if !analyzerbin.Bundled() {
+		return nil
+	}
+
+	a.analyzerMu.Lock()
+	defer a.analyzerMu.Unlock()
+
+	exePath, err := analyzerbin.EnsureInstalled()
+	if err != nil {
+		return err
+	}
+	if !analyzerbin.NeedsWarmup() {
+		return nil
+	}
+	return analyzerbin.Warm(ctx, exePath)
 }
 
 func (a *App) GenerateFromAnalysis(audioPath string, song analysis.SongAnalysis, style string, target string, editorDevices []EditorDevice) (*EditorSession, error) {

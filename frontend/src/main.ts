@@ -350,8 +350,9 @@ function renderTour() {
   if (!step) {
     return '';
   }
-  // Stand aside for the spinner and prompts, which own the screen when they show.
-  if (state.loading || state.previewStarting || state.regenerationPrompt) {
+  // Stand aside for prompts and preview startup. During first generation the
+  // guide intentionally remains above the spinner so the wait has useful context.
+  if (state.previewStarting || state.regenerationPrompt) {
     return '';
   }
 
