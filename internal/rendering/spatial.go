@@ -33,12 +33,6 @@ const (
 	// keeps some light so the motion reads as a wave over it rather than a dot
 	// crossing a dead surface.
 	waveFloor = 0.3
-	// waveSharpness tightens the crest. 1 is a plain cosine, which is the most
-	// fluid: raising it flattens the trough into a dead stretch, measurably so at
-	// 16 zones, where 2.2 parks 31% of them at the floor against 6% at 1. Beat
-	// definition comes from the envelope scaling the whole frame, so the wave does
-	// not need a tight peak to land.
-	waveSharpness = 1.0
 )
 
 // headPosition is where a travelling effect has reached, in fractional zones. The
@@ -67,39 +61,13 @@ func distanceBehind(head float64, index, size int) float64 {
 // only in brightness and so looked frozen on a strip.
 func multiZonePulseFrame(intent EffectIntent, surface lifxdevice.Surface, width, height int) lifxeffects.Frame {
 	caps := frameCapabilities(intent, surface, width, height)
-	size := caps.Width * caps.Height
-	if size <= 0 {
-		size = 1
-	}
-
-	// Every zone belongs to the effect: colour flows along the strip and brightness
-	// rides a crest that travels with the beat.
-	//
-	// A lit head over a static background could not work here. Because the head
-	// advances a whole fraction of the strip per beat it only ever landed on a few
-	// zones — 8 of 16, never the odd ones — so it appeared to sit in the same spots
-	// while most of the strip held one flat colour.
-	stops := intent.Palette.GradientStops(size)
-	if len(stops) == 0 {
-		stops = []palette.Color{intent.Color}
-	}
-
-	head := headPosition(intent, size, beatsPerTraversal)
-	colors := make([]lifxeffects.Color, size)
-	for i := range colors {
-		// Colours scroll with the head, so no zone keeps the same hue.
-		stop := stops[positiveModulo(i+int(head), len(stops))]
-
-		// One cosine cycle across the strip, its crest on the head. Every zone
-		// changes as the crest moves, rather than only the few under a tail.
-		offset := distanceBehind(head, i, size) / float64(size)
-		crest := 0.5 * (1 + math.Cos(2*math.Pi*offset))
-		level := waveFloor + (1-waveFloor)*math.Pow(crest, waveSharpness)
-
-		colors[i] = effectColor(stop, intent.Brightness*level)
-	}
-
-	return frame(colors, caps, intent.DurationMS)
+	flow := lifxeffects.NewFlow(lifxeffects.FlowConfig{
+		Capabilities: caps,
+		Palette:      effectPalette(intent.Palette, intent.Brightness),
+		Axis:         lifxeffects.FlowAxisHorizontal,
+		Floor:        waveFloor,
+	})
+	return flow.FrameAtPhase((float64(intent.BeatIndex)+intent.Phase)/beatsPerTraversal, time.Duration(intent.DurationMS)*time.Millisecond)
 }
 
 // multiZoneSweepFrame travels a band of palette colours along the strip. The
@@ -181,21 +149,14 @@ func matrixRingFrame(intent EffectIntent, surface lifxdevice.Surface, width, hei
 // every row identical, so the tile read as a set of vertical bars.
 func matrixWaveFrame(intent EffectIntent, surface lifxdevice.Surface, width, height int) lifxeffects.Frame {
 	caps := frameCapabilities(intent, surface, width, height)
-
-	stops := intent.Palette.GradientStops(caps.Width + caps.Height)
-	if len(stops) == 0 {
-		stops = []palette.Color{intent.Color}
-	}
-
-	colors := make([]lifxeffects.Color, 0, caps.Width*caps.Height)
-	for y := 0; y < caps.Height; y++ {
-		for x := 0; x < caps.Width; x++ {
-			color := stops[positiveModulo(x+y+intent.BeatIndex, len(stops))]
-			colors = append(colors, effectColor(color, intent.Brightness))
-		}
-	}
-
-	return frame(colors, caps, intent.DurationMS)
+	span := max(caps.Width+caps.Height-1, 1)
+	flow := lifxeffects.NewFlow(lifxeffects.FlowConfig{
+		Capabilities: caps,
+		Palette:      effectPalette(intent.Palette, intent.Brightness),
+		Axis:         lifxeffects.FlowAxisDiagonal,
+		Floor:        waveFloor,
+	})
+	return flow.FrameAtPhase((float64(intent.BeatIndex)+intent.Phase)/float64(span), time.Duration(intent.DurationMS)*time.Millisecond)
 }
 
 // driftFrame rotates a frame's colours by the beat index so an otherwise static

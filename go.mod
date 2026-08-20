@@ -1,10 +1,10 @@
 module lifx-maestro
 
-go 1.25
+go 1.26
 
 require (
-	github.com/alessio-palumbo/lifxlan-go v0.4.1
-	github.com/alessio-palumbo/lifxprotocol-go v0.3.0
+	github.com/alessio-palumbo/lifxlan-go v0.6.0
+	github.com/alessio-palumbo/lifxprotocol-go v0.4.0
 	github.com/gopxl/beep v1.4.1
 	github.com/urfave/cli/v3 v3.9.0
 	github.com/wailsapp/wails/v2 v2.12.0
@@ -12,7 +12,7 @@ require (
 
 require (
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
-	github.com/alessio-palumbo/lifxregistry-go v0.3.0 // indirect
+	github.com/alessio-palumbo/lifxregistry-go v0.4.0 // indirect
 	github.com/bep/debounce v1.2.1 // indirect
 	github.com/ebitengine/oto/v3 v3.1.0 // indirect
 	github.com/ebitengine/purego v0.7.1 // indirect
