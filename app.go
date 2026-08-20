@@ -34,7 +34,10 @@ type App struct {
 	lifx         *devices.LifxDeviceController
 	// analyzerMu prevents startup warmup and user-triggered analysis from
 	// running the bundled analyzer at the same time on first launch.
-	analyzerMu sync.Mutex
+	analyzerMu         sync.Mutex
+	analyzerWarmupMu   sync.Mutex
+	analyzerWarmupStop context.CancelFunc
+	analyzerWarmupDone chan struct{}
 	// masterBrightness survives between previews so the setting sticks, and is
 	// pushed to the running player so the fader takes effect mid-song.
 	masterBrightness atomic.Uint64
@@ -155,7 +158,7 @@ func (a *App) startup(ctx context.Context) {
 	// analyzer compiles its hot paths. Analyze reports any failure when it
 	// retries, so failures here are silent by design.
 	go func() {
-		_ = a.prepareAnalyzer(a.ctx)
+		_ = a.warmAnalyzer()
 	}()
 }
 
@@ -251,7 +254,8 @@ func (a *App) Analyze(audioPath string) (analysis.SongAnalysis, error) {
 		return analysis.SongAnalysis{}, err
 	}
 
-	if err := a.prepareAnalyzer(a.ctx); err != nil {
+	a.cancelAnalyzerWarmup()
+	if _, err := a.ensureAnalyzerInstalled(); err != nil {
 		return analysis.SongAnalysis{}, fmt.Errorf("prepare analyzer: %w", err)
 	}
 
@@ -263,18 +267,33 @@ func (a *App) Analyze(audioPath string) (analysis.SongAnalysis, error) {
 	if err != nil {
 		return analysis.SongAnalysis{}, err
 	}
+	if analyzerbin.Bundled() {
+		_ = analyzerbin.MarkWarm()
+	}
 	return *result, nil
 }
 
-func (a *App) prepareAnalyzer(ctx context.Context) error {
+func (a *App) warmAnalyzer() error {
 	if !analyzerbin.Bundled() {
 		return nil
 	}
 
-	a.analyzerMu.Lock()
-	defer a.analyzerMu.Unlock()
+	ctx, cancel := context.WithCancel(a.ctx)
+	done := make(chan struct{})
+	a.analyzerWarmupMu.Lock()
+	a.analyzerWarmupStop = cancel
+	a.analyzerWarmupDone = done
+	a.analyzerWarmupMu.Unlock()
+	defer func() {
+		cancel()
+		a.analyzerWarmupMu.Lock()
+		a.analyzerWarmupStop = nil
+		a.analyzerWarmupDone = nil
+		a.analyzerWarmupMu.Unlock()
+		close(done)
+	}()
 
-	exePath, err := analyzerbin.EnsureInstalled()
+	exePath, err := a.ensureAnalyzerInstalled()
 	if err != nil {
 		return err
 	}
@@ -282,6 +301,32 @@ func (a *App) prepareAnalyzer(ctx context.Context) error {
 		return nil
 	}
 	return analyzerbin.Warm(ctx, exePath)
+}
+
+func (a *App) cancelAnalyzerWarmup() {
+	a.analyzerWarmupMu.Lock()
+	cancel := a.analyzerWarmupStop
+	done := a.analyzerWarmupDone
+	a.analyzerWarmupStop = nil
+	a.analyzerWarmupDone = nil
+	a.analyzerWarmupMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if done != nil {
+		<-done
+	}
+}
+
+func (a *App) ensureAnalyzerInstalled() (string, error) {
+	if !analyzerbin.Bundled() {
+		return "", nil
+	}
+
+	a.analyzerMu.Lock()
+	defer a.analyzerMu.Unlock()
+
+	return analyzerbin.EnsureInstalled()
 }
 
 func (a *App) GenerateFromAnalysis(audioPath string, song analysis.SongAnalysis, style string, target string, editorDevices []EditorDevice) (*EditorSession, error) {
