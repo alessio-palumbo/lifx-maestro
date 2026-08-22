@@ -860,11 +860,12 @@ button {
   grid-template-columns: 86px 1fr;
   gap: 12px;
   align-items: stretch;
+  min-height: 98px;
   margin-bottom: 14px;
 }
 
 .swatch {
-  min-height: 76px;
+  height: 98px;
   border: 1px solid rgba(255, 255, 255, 0.25);
   border-radius: 8px;
   background: var(--event-bg, var(--event-color));
@@ -875,10 +876,66 @@ button {
   background-size: 100% 100%;
 }
 
+.color-wheel {
+  position: relative;
+  aspect-ratio: 1;
+  width: min(100%, 174px);
+  border: 1px solid #303743;
+  border-radius: 50%;
+  cursor: crosshair;
+  background:
+    radial-gradient(circle, #fff 0%, rgba(255, 255, 255, 0) 68%),
+    conic-gradient(from -90deg, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1), 0 8px 22px rgba(0, 0, 0, 0.22);
+}
+
+.color-wheel::after,
+.kelvin-bar::after {
+  position: absolute;
+  content: "";
+  border: 2px solid #f5f7fb;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55), 0 0 10px rgba(245, 247, 251, 0.3);
+  pointer-events: none;
+}
+
+.color-wheel::after {
+  left: var(--marker-x, 50%);
+  top: var(--marker-y, 50%);
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.kelvin-bar {
+  position: relative;
+  height: 30px;
+  border: 1px solid #303743;
+  border-radius: 7px;
+  cursor: crosshair;
+  background: linear-gradient(90deg, #ff8d39, #ffd7a6 35%, #f2f6ff 58%, #95c8ff);
+}
+
+.kelvin-bar::after {
+  left: var(--marker-x, 50%);
+  top: 50%;
+  width: 5px;
+  height: 22px;
+  border-radius: 4px;
+  transform: translate(-50%, -50%);
+}
+
+.color-wheel.disabled,
+.kelvin-bar.disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
 .color-readout {
   display: grid;
   align-content: center;
   gap: 3px;
+  min-height: 98px;
   min-width: 0;
   padding: 10px;
   border: 1px solid #2d3440;
@@ -943,6 +1000,23 @@ button {
 
 .icon-action {
   font-size: 18px;
+}
+
+.download-action {
+  display: inline-grid;
+  place-items: center;
+  width: 38px;
+  padding: 0;
+}
+
+.download-icon {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .inspector-head {

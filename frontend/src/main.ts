@@ -299,7 +299,11 @@ function renderToolbar() {
         </label>
         <button id="choose-song" class="tool primary" ${state.loading ? 'disabled' : ''}>Choose Song</button>
         <button id="regenerate" class="tool ${state.needsRegeneration ? 'attention' : ''}" ${state.loading || !selectedSongPath() ? 'disabled' : ''}>${state.needsRegeneration ? 'Regenerate' : 'Generate'}</button>
-        <button id="save" class="tool" ${!session ? 'disabled' : ''}>Save JSON</button>
+        <button id="save" class="tool icon-action download-action" title="Download selected timeline JSON" aria-label="Download selected timeline JSON" ${!session ? 'disabled' : ''}>
+          <svg class="download-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14" />
+          </svg>
+        </button>
       </div>
     </header>
   `;
@@ -435,7 +439,7 @@ function renderTargets() {
   const groups = unique(devices.map((device) => device.group).filter(Boolean));
   const locations = unique(devices.map((device) => device.location).filter(Boolean));
   const deviceItems = devices.map((device) => {
-    const selected = targetIncludes(device.id) ? 'selected' : '';
+    const selected = targetIncludesDevice(device) ? 'selected' : '';
     return `
       <button class="device ${selected}" data-device="${escapeAttr(device.id)}">
         <span class="device-toggle"></span>
@@ -460,7 +464,7 @@ function renderTargets() {
           <div class="sidebar-note">${devices.length > 0 ? 'Discovered devices' : 'No devices discovered'}</div>
         </div>
       </div>
-      <button class="device ${targetIncludes('all') ? 'selected' : ''}" data-target-token="all">
+      <button class="device ${targetAllSelected() ? 'selected' : ''}" data-target-token="all">
         <span class="device-toggle"></span>
         <span class="device-main">
           <strong>All targets</strong>
@@ -468,8 +472,8 @@ function renderTargets() {
         </span>
         <span class="badge">mix</span>
       </button>
-      ${renderTokenGroup('Groups', groups)}
-      ${renderTokenGroup('Locations', locations)}
+      ${renderTokenGroup('Groups', groups, 'group')}
+      ${renderTokenGroup('Locations', locations, 'location')}
       <div class="token-title device-title">Devices</div>
       ${deviceItems}
     </aside>
@@ -499,7 +503,7 @@ function renderOverview() {
   `;
 }
 
-function renderTokenGroup(title: string, values: string[]) {
+function renderTokenGroup(title: string, values: string[], kind: 'group' | 'location') {
   if (values.length === 0) {
     return '';
   }
@@ -508,7 +512,7 @@ function renderTokenGroup(title: string, values: string[]) {
       <div class="token-title">${escapeHTML(title)}</div>
       <div class="token-list">
         ${values.map((value) => `
-          <button class="target-token ${targetIncludes(value) ? 'selected' : ''}" data-target-token="${escapeAttr(value)}">${escapeHTML(value)}</button>
+          <button class="target-token ${targetGroupSelected(value, kind) ? 'selected' : ''}" data-target-token="${escapeAttr(value)}" data-target-kind="${kind}">${escapeHTML(value)}</button>
         `).join('')}
       </div>
     </div>
@@ -664,6 +668,8 @@ function renderInspector() {
   const spatial = spatialEventSummary(event);
   const colorControlsDisabled = spatial ? 'disabled' : '';
   const colorControlHint = spatial ? `<div class="field-note">Gradient editing is not available yet. Duplicate or delete the event, or regenerate the timeline to change this gradient.</div>` : '';
+  const colorMarker = colorWheelMarker(hue, saturation);
+  const kelvinMarker = kelvinBarMarker(kelvin);
 
   return `
     <aside class="inspector">
@@ -681,9 +687,10 @@ function renderInspector() {
             <strong>${escapeHTML(spatial.title)}</strong>
             <span>${escapeHTML(spatial.detail)}</span>
             <span>${escapeHTML(spatial.colors)}</span>
+            <span>${escapeHTML(spatial.brightness)}</span>
           ` : `
-            <strong>${Math.round(hue)}°</strong>
-            <span>${Math.round(saturation)}% sat · ${Math.round(brightness)}% bri</span>
+            <strong>${saturation <= 0 ? `${Math.round(kelvin)} K` : `${Math.round(hue)}°`}</strong>
+            <span>${saturation <= 0 ? `${Math.round(brightness)}% bri` : `${Math.round(saturation)}% sat · ${Math.round(brightness)}% bri`}</span>
             <span>${Math.round(kelvin)} K</span>
           `}
         </div>
@@ -696,20 +703,19 @@ function renderInspector() {
         <span>Time (ms)</span>
         <input id="event-time" type="number" min="0" max="${session.timeline.duration_ms}" value="${event.time_ms}" />
       </label>
-      <label class="edit-field">
-        <span>Hue</span>
-        <input id="event-hue" class="hue-range" type="range" min="0" max="360" value="${hue}" ${colorControlsDisabled} />
-      </label>
-      <label class="edit-field">
-        <span>Saturation</span>
-        <input id="event-saturation" type="range" min="0" max="100" value="${saturation}" ${colorControlsDisabled} />
-      </label>
+      <div class="edit-field">
+        <span>Color</span>
+        <div id="color-wheel" class="color-wheel ${spatial ? 'disabled' : ''}" style="--marker-x:${colorMarker.x}%;--marker-y:${colorMarker.y}%;" role="slider" aria-label="Hue and saturation"></div>
+        <input id="event-hue" type="hidden" value="${hue}" />
+        <input id="event-saturation" type="hidden" value="${saturation}" />
+      </div>
       <label class="edit-field">
         <span>Brightness</span>
         <input id="event-brightness" type="range" min="1" max="100" value="${brightness}" ${colorControlsDisabled} />
       </label>
       <label class="edit-field">
         <span>Kelvin</span>
+        <div id="kelvin-bar" class="kelvin-bar ${spatial ? 'disabled' : ''}" style="--marker-x:${kelvinMarker}%;" role="slider" aria-label="Kelvin"></div>
         <input id="event-kelvin" type="number" min="1500" max="9000" step="100" value="${kelvin}" ${colorControlsDisabled} />
       </label>
       ${colorControlHint}
@@ -786,7 +792,7 @@ function bindEvents() {
 
   document.querySelectorAll<HTMLButtonElement>('[data-target-token]').forEach((button) => {
     button.addEventListener('click', () => {
-      toggleTargetToken(button.dataset.targetToken ?? 'all');
+      toggleTargetToken(button.dataset.targetToken ?? 'all', button.dataset.targetKind as TargetTokenKind | undefined);
       handleTargetChanged();
       render();
     });
@@ -794,7 +800,7 @@ function bindEvents() {
 
   document.querySelectorAll<HTMLButtonElement>('.device[data-device]').forEach((button) => {
     button.addEventListener('click', () => {
-      toggleTargetToken(button.dataset.device ?? 'all');
+      toggleDeviceTarget(button.dataset.device ?? 'all');
       handleTargetChanged();
       render();
     });
@@ -867,6 +873,9 @@ function bindInspector() {
 
   ['event-time', 'event-hue', 'event-saturation', 'event-brightness', 'event-kelvin', 'event-duration']
     .forEach((id) => document.querySelector(`#${id}`)?.addEventListener('change', update));
+
+  bindColorWheel(update);
+  bindKelvinBar(update);
 
   document.querySelector('#delete-event')?.addEventListener('click', () => {
     if (state.selectedEvent >= 0) {
@@ -999,7 +1008,7 @@ async function saveTimeline() {
     if (!path) {
       return;
     }
-    await SaveTimeline({ path, timeline: session.timeline } as any);
+    await SaveTimeline({ path, timeline: timelineForSelectedTargets(session) } as any);
     state.status = `Saved ${path}`;
   } catch (error) {
     reportFailure(error);
@@ -1299,7 +1308,7 @@ function handleTargetChanged() {
 }
 
 function selectedTargetDevices(session: EditorSession) {
-  const tokens = state.targetTokens.length > 0 ? state.targetTokens : splitTarget(session.target || 'all');
+  const tokens = state.targetTokens;
   const seen = new Set<string>();
   const devices: DeviceInfo[] = [];
   const addDevice = (device: DeviceInfo) => {
@@ -1325,7 +1334,7 @@ function selectedTargetDevices(session: EditorSession) {
 function timelineForSelectedTargets(session: EditorSession): Timeline {
   const devices = selectedTargetDevices(session);
   if (devices.length === 0) {
-    return session.timeline;
+    return { ...session.timeline, events: [] };
   }
   const target = targetString();
   const events = session.timeline.events
@@ -1431,37 +1440,100 @@ function selectedSongPath() {
 }
 
 function targetString() {
-  if (state.targetTokens.length > 0) {
-    return state.targetTokens.join(',');
-  }
-  return state.session?.target || 'all';
+  return state.targetTokens.join(',');
 }
 
 function splitTarget(value: string) {
   return unique(value.split(',').map((part) => part.trim()).filter(Boolean));
 }
 
+type TargetTokenKind = 'group' | 'location';
+
 function targetIncludes(value: string) {
   return state.targetTokens.some((target) => sameToken(target, value));
 }
 
-function toggleTargetToken(value: string) {
+function targetIncludesDevice(device: DeviceInfo) {
+  return state.targetTokens.some((target) => sameToken(target, 'all') || matchesDeviceToken(target, device));
+}
+
+function targetGroupSelected(value: string, kind: TargetTokenKind) {
+  const session = state.session;
+  const devices = session?.devices ?? state.devices;
+  const matching = devices.filter((device) => targetTokenMatchesDevice(value, kind, device));
+  return matching.length > 0 && matching.every((device) => targetIncludesDevice(device));
+}
+
+function targetAllSelected() {
+  const session = state.session;
+  const devices = session?.devices ?? state.devices;
+  return devices.length > 0 && devices.every((device) => targetIncludesDevice(device));
+}
+
+function toggleTargetToken(value: string, kind?: TargetTokenKind) {
   if (!value) {
     return;
   }
   if (sameToken(value, 'all')) {
-    state.targetTokens = ['all'];
+    state.targetTokens = targetAllSelected() ? [] : ['all'];
+    return;
+  }
+  const devices = state.session?.devices ?? state.devices;
+  const groupDevices = kind ? devices.filter((device) => targetTokenMatchesDevice(value, kind, device)) : [];
+  const withoutAll = state.targetTokens.filter((target) => !sameToken(target, 'all'));
+  if (groupDevices.length > 0 && groupDevices.every((device) => targetIncludesDevice(device))) {
+    const groupDeviceIDs = new Set(groupDevices.map((device) => device.id.toLowerCase()));
+    state.targetTokens = selectedDevicesFromTokens(state.targetTokens, devices)
+      .filter((device) => !groupDeviceIDs.has(device.id.toLowerCase()))
+      .map((device) => device.id);
+  } else if (withoutAll.some((target) => sameToken(target, value))) {
+    state.targetTokens = withoutAll.filter((target) => !sameToken(target, value));
+  } else {
+    const groupDeviceIDs = new Set(groupDevices.map((device) => device.id.toLowerCase()));
+    state.targetTokens = [...withoutAll.filter((target) => !groupDeviceIDs.has(target.toLowerCase())), value];
+  }
+}
+
+function targetTokenMatchesDevice(value: string, kind: TargetTokenKind, device: DeviceInfo) {
+  return kind === 'group' ? sameToken(device.group, value) : sameToken(device.location, value);
+}
+
+function toggleDeviceTarget(deviceID: string) {
+  const session = state.session;
+  const devices = session?.devices ?? state.devices;
+  const device = devices.find((candidate) => sameToken(candidate.id, deviceID));
+  if (!device) {
+    toggleTargetToken(deviceID);
     return;
   }
   const withoutAll = state.targetTokens.filter((target) => !sameToken(target, 'all'));
-  if (withoutAll.some((target) => sameToken(target, value))) {
-    state.targetTokens = withoutAll.filter((target) => !sameToken(target, value));
+  if (targetIncludesDevice(device)) {
+    const keptDevices = selectedDevicesFromTokens(state.targetTokens, devices)
+      .filter((candidate) => !sameToken(candidate.id, device.id));
+    state.targetTokens = keptDevices.map((candidate) => candidate.id);
   } else {
-    state.targetTokens = [...withoutAll, value];
+    state.targetTokens = withoutAll
+      .filter((target) => !tokenBroadlyIncludesDevice(target, device))
+      .concat(device.id);
   }
-  if (state.targetTokens.length === 0) {
-    state.targetTokens = ['all'];
+}
+
+function selectedDevicesFromTokens(tokens: string[], devices: DeviceInfo[]) {
+  const seen = new Set<string>();
+  const selected: DeviceInfo[] = [];
+  for (const token of tokens) {
+    for (const device of devices) {
+      if ((sameToken(token, 'all') || matchesDeviceToken(token, device)) && !seen.has(device.id)) {
+        seen.add(device.id);
+        selected.push(device);
+      }
+    }
   }
+  return selected;
+}
+
+function tokenBroadlyIncludesDevice(token: string, device: DeviceInfo) {
+  return sameToken(token, device.group) || sameToken(token, device.location);
 }
 
 function syncSessionTarget() {
@@ -1477,10 +1549,14 @@ function handleStyleChanged(selectedStyle: string) {
   if (selectedStyle === state.generatedStyle) {
     state.regenerationReasons.style = false;
     updateNeedsRegeneration();
+    if (!state.needsRegeneration) {
+      state.regenerationPrompt = false;
+    }
     state.status = 'Style restored to generated timeline';
     return;
   }
   markRegenerationRequired('style', 'Style changed; regenerate to update choreography');
+  state.regenerationPrompt = true;
 }
 
 function markRegenerationRequired(reason: keyof AppState['regenerationReasons'], message: string) {
@@ -1575,8 +1651,12 @@ function eventColor(event: TimelineEvent) {
   const hue = colorParam(params, 'hue', 0);
   const saturation = percentParam(params, 'saturation', 0);
   const brightness = percentParam(params, 'brightness', 80);
+  const kelvin = colorParam(params, 'kelvin', 3500);
   if (event.action === 'power_on') {
     return '#f3e7c8';
+  }
+  if (saturation <= 0) {
+    return kelvinColor(kelvin, brightness);
   }
   return hsla(hue, saturation, brightness);
 }
@@ -1615,10 +1695,12 @@ function spatialEventSummary(event: TimelineEvent) {
   const zones = arrayParam(params, 'zones') as Array<Record<string, unknown>>;
   if (zones.length) {
     const colors = eventColors(event);
+    const brightness = brightnessSummary(zones.map((zone) => recordParam(zone, 'color')));
     return {
       title: 'Zone gradient',
       detail: `${zones.length} zones`,
       colors: `${colors.length} ${colors.length === 1 ? 'color' : 'colors'}`,
+      brightness,
     };
   }
 
@@ -1632,17 +1714,107 @@ function spatialEventSummary(event: TimelineEvent) {
       title: 'Matrix frame',
       detail: `${dimensions}, ${pixels.length} pixels`,
       colors: `${colors.length} ${colors.length === 1 ? 'color' : 'colors'}`,
+      brightness: brightnessSummary(pixels.map((pixel) => recordParam(pixel, 'color'))),
     };
   }
 
   return undefined;
 }
 
+function brightnessSummary(colors: Array<Record<string, unknown> | undefined>) {
+  const values = colors
+    .map((color) => color ? percentValue(colorRecordNumber(color, 'brightness', Number.NaN)) : Number.NaN)
+    .filter((value) => Number.isFinite(value))
+    .map((value) => clamp(value, 1, 100));
+  if (values.length === 0) {
+    return 'Brightness unavailable';
+  }
+  const minValue = Math.min(...values);
+  const maxValue = Math.max(...values);
+  const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+  if (Math.round(minValue) === Math.round(maxValue)) {
+    return `${Math.round(average)}% bri`;
+  }
+  return `${Math.round(minValue)}-${Math.round(maxValue)}% bri`;
+}
+
+function colorWheelMarker(hue: number, saturation: number) {
+  const angle = positiveModulo(hue + 180, 360) * Math.PI / 180;
+  const radius = clamp(saturation, 0, 100) / 2;
+  return {
+    x: 50 + Math.cos(angle) * radius,
+    y: 50 + Math.sin(angle) * radius,
+  };
+}
+
+function kelvinBarMarker(kelvin: number) {
+  return clamp((kelvin - 1500) / (9000 - 1500) * 100, 0, 100);
+}
+
+function bindColorWheel(update: () => void) {
+  const wheel = document.querySelector<HTMLElement>('#color-wheel');
+  if (!wheel || wheel.classList.contains('disabled')) {
+    return;
+  }
+  const setFromPointer = (event: PointerEvent) => {
+    const rect = wheel.getBoundingClientRect();
+    const x = event.clientX - rect.left - rect.width / 2;
+    const y = event.clientY - rect.top - rect.height / 2;
+    const radius = Math.min(rect.width, rect.height) / 2;
+    const distance = Math.min(Math.hypot(x, y), radius);
+    const hue = positiveModulo(Math.round(Math.atan2(y, x) * 180 / Math.PI + 180), 360);
+    const saturation = Math.round(distance / radius * 100);
+    setInputValue('event-hue', String(hue));
+    setInputValue('event-saturation', String(saturation));
+    update();
+  };
+  wheel.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    wheel.setPointerCapture(event.pointerId);
+    setFromPointer(event);
+  });
+  wheel.addEventListener('pointermove', (event) => {
+    if (event.buttons === 1) {
+      setFromPointer(event);
+    }
+  });
+}
+
+function bindKelvinBar(update: () => void) {
+  const bar = document.querySelector<HTMLElement>('#kelvin-bar');
+  if (!bar || bar.classList.contains('disabled')) {
+    return;
+  }
+  const setFromPointer = (event: PointerEvent) => {
+    const rect = bar.getBoundingClientRect();
+    const percent = clamp((event.clientX - rect.left) / rect.width, 0, 1);
+    const kelvin = Math.round((1500 + percent * (9000 - 1500)) / 100) * 100;
+    setInputValue('event-kelvin', String(kelvin));
+    setInputValue('event-saturation', '0');
+    update();
+  };
+  bar.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    bar.setPointerCapture(event.pointerId);
+    setFromPointer(event);
+  });
+  bar.addEventListener('pointermove', (event) => {
+    if (event.buttons === 1) {
+      setFromPointer(event);
+    }
+  });
+}
+
 function colorRecordToHsla(color: Record<string, unknown> | undefined) {
   if (!color) {
     return hsla(0, 0, 80);
   }
-  return hsla(colorRecordNumber(color, 'hue', 0), percentValue(colorRecordNumber(color, 'saturation', 0)), percentValue(colorRecordNumber(color, 'brightness', 80)));
+  const saturation = percentValue(colorRecordNumber(color, 'saturation', 0));
+  const brightness = percentValue(colorRecordNumber(color, 'brightness', 80));
+  if (saturation <= 0) {
+    return kelvinColor(colorRecordNumber(color, 'kelvin', 3500), brightness);
+  }
+  return hsla(colorRecordNumber(color, 'hue', 0), saturation, brightness);
 }
 
 function uniqueColorStops(colors: string[]) {
@@ -1775,6 +1947,13 @@ function inputValue(id: string, fallback: string) {
   return document.querySelector<HTMLInputElement | HTMLSelectElement>(`#${id}`)?.value ?? fallback;
 }
 
+function setInputValue(id: string, value: string) {
+  const input = document.querySelector<HTMLInputElement | HTMLSelectElement>(`#${id}`);
+  if (input) {
+    input.value = value;
+  }
+}
+
 function formatTime(ms: number) {
   const total = Math.max(0, Math.floor(ms / 1000));
   const minutes = Math.floor(total / 60);
@@ -1795,8 +1974,46 @@ function hsla(hue: number, saturation: number, brightness: number) {
   return `hsl(${hue} ${clamp(saturation, 0, 100)}% ${clamp(brightness * 0.62, 12, 72)}%)`;
 }
 
+function kelvinColor(kelvin: number, brightness: number) {
+  const [red, green, blue] = kelvinRgb(kelvin);
+  const displayLightness = clamp(brightness / 100, 0, 1);
+  const scale = 0.42 + displayLightness * 0.82;
+  return `rgb(${clampRgb(red * scale)} ${clampRgb(green * scale)} ${clampRgb(blue * scale)})`;
+}
+
+function kelvinRgb(kelvin: number): [number, number, number] {
+  const temperature = clamp(kelvin / 100, 10, 400);
+  let red: number;
+  let green: number;
+  let blue: number;
+
+  if (temperature <= 66) {
+    red = 255;
+    green = 99.4708025861 * Math.log(temperature) - 161.1195681661;
+    blue = temperature <= 19 ? 0 : 138.5177312231 * Math.log(temperature - 10) - 305.0447927307;
+  } else {
+    red = 329.698727446 * Math.pow(temperature - 60, -0.1332047592);
+    green = 288.1221695283 * Math.pow(temperature - 60, -0.0755148492);
+    blue = 255;
+  }
+
+  return [softenWhite(red), softenWhite(green), softenWhite(blue)];
+}
+
+function softenWhite(channel: number) {
+  return clampRgb(channel * 0.62 + 255 * 0.38);
+}
+
+function clampRgb(channel: number) {
+  return Math.round(clamp(channel, 0, 255));
+}
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+function positiveModulo(value: number, modulo: number) {
+  return ((value % modulo) + modulo) % modulo;
 }
 
 function readableError(error: unknown) {
