@@ -16,8 +16,6 @@ const (
 	// backgroundLevel dims the unlit part of a surface instead of switching it
 	// off, so a strip still reads as lit between hits.
 	backgroundLevel = 0.22
-	// tailFloor keeps the far end of a tail visible rather than fading to nothing.
-	tailFloor = 0.15
 	// ringWidth is how many pixels either side of the ring radius stay lit.
 	ringWidth = 1.6
 	// beatsPerTraversal is how long a travelling effect takes to cross a surface,
@@ -128,21 +126,23 @@ func matrixRingFrame(intent EffectIntent, surface lifxdevice.Surface, width, hei
 	// phase carries it outwards between beats rather than jumping a whole step.
 	steps := int(maxRadius) + 1
 	radius := math.Mod(float64(intent.BeatIndex)+intent.Phase, float64(steps))
-
-	colors := make([]lifxeffects.Color, 0, caps.Width*caps.Height)
-	for y := 0; y < caps.Height; y++ {
-		for x := 0; x < caps.Width; x++ {
-			distance := math.Abs(math.Hypot(float64(x)-cx, float64(y)-cy) - radius)
-			if distance >= ringWidth {
-				colors = append(colors, effectColor(background, intent.Brightness*backgroundLevel))
-				continue
-			}
-			level := 1 - distance/ringWidth
-			colors = append(colors, effectColor(accent, intent.Brightness*(tailFloor+(1-tailFloor)*level)))
-		}
+	span := maxRadius + ringWidth
+	if span <= 0 {
+		span = 1
 	}
 
-	return frame(colors, caps, intent.DurationMS)
+	ring := lifxeffects.NewRing(lifxeffects.RingConfig{
+		Capabilities: caps,
+		Palette: lifxeffects.Palette{
+			Name:        intent.Palette.Name,
+			Base:        effectColors(intent.Palette.Base, intent.Brightness),
+			Accents:     []lifxeffects.Color{effectColor(accent, intent.Brightness)},
+			Backgrounds: []lifxeffects.Color{effectColor(background, intent.Brightness)},
+		},
+		Width: ringWidth,
+		Floor: backgroundLevel,
+	})
+	return ring.FrameAtPhase(radius/span, time.Duration(intent.DurationMS)*time.Millisecond)
 }
 
 // matrixWaveFrame scrolls palette colours diagonally. Shifting columns alone left
