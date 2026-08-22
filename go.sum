@@ -1,7 +1,7 @@
 git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 h1:N3IGoHHp9pb6mj1cbXbuaSXV/UMKwmbKLf53nQmtqMA=
 git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3/go.mod h1:QtOLZGz8olr4qH2vWK0QH0w0O4T9fEIjMuWpKUsH7nc=
-github.com/alessio-palumbo/lifxlan-go v0.6.0 h1:zg0ElwYzhDYG3icomWRLvJ8H+9nG1xEa1IrD9+a74ek=
-github.com/alessio-palumbo/lifxlan-go v0.6.0/go.mod h1:u/tL2xXyOQs2IOorme3M19aJTHwBse3zeRm0z4R9qOg=
+github.com/alessio-palumbo/lifxlan-go v0.6.2 h1:KNWVNWyYc9EjiDulxNNgCI2R2KOIicueL5vTbWk9FLM=
+github.com/alessio-palumbo/lifxlan-go v0.6.2/go.mod h1:u/tL2xXyOQs2IOorme3M19aJTHwBse3zeRm0z4R9qOg=
 github.com/alessio-palumbo/lifxprotocol-go v0.4.0 h1:oTweXfIyw5oC7OXdDezuY3lx1uhDju3p/CZRUE2HUYk=
 github.com/alessio-palumbo/lifxprotocol-go v0.4.0/go.mod h1:Wvmw7KNc2ieF6CPM8Of0EdWW0e/w5nlTwK7sLwMDbJ0=
 github.com/alessio-palumbo/lifxregistry-go v0.4.0 h1:Yu7KbNbwEu6RUJQ1Z99+s9RNjxZysdTggEJHWgqGgj4=

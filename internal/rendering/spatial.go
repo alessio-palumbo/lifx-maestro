@@ -151,12 +151,12 @@ func matrixWaveFrame(intent EffectIntent, surface lifxdevice.Surface, width, hei
 	caps := frameCapabilities(intent, surface, width, height)
 	span := max(caps.Width+caps.Height-1, 1)
 	flow := lifxeffects.NewFlow(lifxeffects.FlowConfig{
-		Capabilities: caps,
-		Palette:      effectPalette(intent.Palette, intent.Brightness),
-		Axis:         lifxeffects.FlowAxisDiagonal,
-		Floor:        waveFloor,
+		Capabilities:   caps,
+		Palette:        effectPalette(intent.Palette, intent.Brightness),
+		Axis:           lifxeffects.FlowAxisDiagonal,
+		BrightnessMode: lifxeffects.FlowBrightnessConstant,
 	})
-	return flow.FrameAtPhase((float64(intent.BeatIndex)+intent.Phase)/float64(span), time.Duration(intent.DurationMS)*time.Millisecond)
+	return flow.FrameAtPhase(float64(intent.BeatIndex)/float64(span), time.Duration(intent.DurationMS)*time.Millisecond)
 }
 
 // driftFrame rotates a frame's colours by the beat index so an otherwise static
