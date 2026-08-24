@@ -6,7 +6,6 @@ import (
 
 	lifxdevice "github.com/alessio-palumbo/lifxlan-go/pkg/device"
 	lifxeffects "github.com/alessio-palumbo/lifxlan-go/pkg/effects"
-	"lifx-maestro/internal/palette"
 )
 
 // Spatial effects give strips and tiles something that moves across the surface
@@ -16,6 +15,12 @@ const (
 	// backgroundLevel dims the unlit part of a surface instead of switching it
 	// off, so a strip still reads as lit between hits.
 	backgroundLevel = 0.22
+	// sweepBandFraction, sweepBackgroundLevel, and sweepTailLevel are intentionally
+	// tighter than PaletteSweep's defaults so sweep remains visually distinct from
+	// Flow: a moving band over a dim background rather than another broad wave.
+	sweepBandFraction    = 0.22
+	sweepBackgroundLevel = 0.12
+	sweepTailLevel       = 0.3
 	// ringWidth is how many pixels either side of the ring radius stay lit.
 	ringWidth = 1.6
 	// beatsPerTraversal is how long a travelling effect takes to cross a surface,
@@ -33,78 +38,38 @@ const (
 	waveFloor = 0.3
 )
 
-// headPosition is where a travelling effect has reached, in fractional zones. The
-// phase keeps it moving between beats, so the decay half of a beat's envelope is
-// drawn slightly further along than the hit.
-func headPosition(intent EffectIntent, size, beatsPerCrossing int) float64 {
-	perBeat := float64(size) / float64(beatsPerCrossing)
-	if perBeat < 1 {
-		perBeat = 1
-	}
-	return (float64(intent.BeatIndex) + intent.Phase) * perBeat
-}
-
-// distanceBehind measures how far a zone sits behind the head, wrapping around
-// the surface, in fractional zones.
-func distanceBehind(head float64, index, size int) float64 {
-	behind := math.Mod(head-float64(index), float64(size))
-	if behind < 0 {
-		behind += float64(size)
-	}
-	return behind
-}
-
-// multiZonePulseFrame lights a head zone that advances one zone per beat and
-// trails a fading tail behind it. This replaces a static gradient, which changed
-// only in brightness and so looked frozen on a strip.
+// multiZonePulseFrame uses Flow's broad travelling crest. Forward keeps the
+// brightness movement aligned with Maestro's previous beat response; the palette
+// sequence is only offset by one zone in some phases, which is not perceptible on
+// a physical strip.
 func multiZonePulseFrame(intent EffectIntent, surface lifxdevice.Surface, width, height int) lifxeffects.Frame {
 	caps := frameCapabilities(intent, surface, width, height)
 	flow := lifxeffects.NewFlow(lifxeffects.FlowConfig{
 		Capabilities: caps,
 		Palette:      effectPalette(intent.Palette, intent.Brightness),
 		Axis:         lifxeffects.FlowAxisHorizontal,
+		Direction:    lifxeffects.FlowDirectionForward,
 		Floor:        waveFloor,
 	})
 	return flow.FrameAtPhase((float64(intent.BeatIndex)+intent.Phase)/beatsPerTraversal, time.Duration(intent.DurationMS)*time.Millisecond)
 }
 
-// multiZoneSweepFrame travels a band of palette colours along the strip. The
-// previous sweep lit a single zone, which read as a dot rather than a sweep.
+// multiZoneSweepFrame uses a tighter PaletteSweep than the library default. This
+// keeps sweep distinct from pulse: a bright travelling band over a dim moving
+// background.
 func multiZoneSweepFrame(intent EffectIntent, surface lifxdevice.Surface, width, height int) lifxeffects.Frame {
 	caps := frameCapabilities(intent, surface, width, height)
-	size := caps.Width * caps.Height
-	if size <= 0 {
-		size = 1
-	}
-
-	band := max(2, size/3)
-	stops := intent.Palette.GradientStops(band)
-	if len(stops) == 0 {
-		stops = []palette.Color{intent.Color}
-	}
-	// Behind the band the strip carries a dimmer version of the same flowing
-	// gradient. A single background colour there left two thirds of the strip
-	// holding one flat hue while the band went past.
-	trail := intent.Palette.GradientStops(size)
-	if len(trail) == 0 {
-		trail = []palette.Color{intent.Palette.BackgroundForSection(intent.Section)}
-	}
-	head := headPosition(intent, size, sweepBeatsPerTraversal)
-
-	colors := make([]lifxeffects.Color, size)
-	for i := range colors {
-		behind := distanceBehind(head, i, size)
-		if behind >= float64(band) {
-			stop := trail[positiveModulo(i+int(head), len(trail))]
-			colors[i] = effectColor(stop, intent.Brightness*backgroundLevel)
-			continue
-		}
-		// Fade the trailing edge so the band has a direction.
-		level := 1 - 0.55*behind/float64(band)
-		colors[i] = effectColor(stops[min(int(behind), len(stops)-1)], intent.Brightness*level)
-	}
-
-	return frame(colors, caps, intent.DurationMS)
+	sweep := lifxeffects.NewPaletteSweep(lifxeffects.PaletteSweepConfig{
+		Capabilities:               caps,
+		Palette:                    effectPalette(intent.Palette, intent.Brightness),
+		Axis:                       lifxeffects.FlowAxisHorizontal,
+		Direction:                  lifxeffects.FlowDirectionForward,
+		BandFraction:               sweepBandFraction,
+		BackgroundBrightnessFactor: sweepBackgroundLevel,
+		TailBrightnessFactor:       sweepTailLevel,
+		Sampling:                   lifxeffects.FlowSamplingStep,
+	})
+	return sweep.FrameAtPhase((float64(intent.BeatIndex)+intent.Phase)/sweepBeatsPerTraversal, time.Duration(intent.DurationMS)*time.Millisecond)
 }
 
 // matrixRingFrame expands a ring from the centre, one step per beat. The previous
@@ -154,25 +119,25 @@ func matrixWaveFrame(intent EffectIntent, surface lifxdevice.Surface, width, hei
 		Capabilities:   caps,
 		Palette:        effectPalette(intent.Palette, intent.Brightness),
 		Axis:           lifxeffects.FlowAxisDiagonal,
+		Direction:      lifxeffects.FlowDirectionReverse,
 		BrightnessMode: lifxeffects.FlowBrightnessConstant,
 	})
 	return flow.FrameAtPhase(float64(intent.BeatIndex)/float64(span), time.Duration(intent.DurationMS)*time.Millisecond)
 }
 
-// driftFrame rotates a frame's colours by the beat index so an otherwise static
-// gradient keeps moving. Used by the calm sections, where a travelling head would
-// be too busy but a frozen surface looks broken.
-func driftFrame(source lifxeffects.Frame, beatIndex int) lifxeffects.Frame {
-	if len(source.Colors) <= 1 || beatIndex == 0 {
-		return source
-	}
-	offset := positiveModulo(beatIndex, len(source.Colors))
-	rotated := make([]lifxeffects.Color, len(source.Colors))
-	for i := range source.Colors {
-		rotated[i] = source.Colors[positiveModulo(i+offset, len(source.Colors))]
-	}
-	source.Colors = rotated
-	return source
+// driftFrame keeps calm sections moving without adding a travelling brightness
+// crest. Reverse matches Maestro's previous gradient rotation.
+func driftFrame(intent EffectIntent, surface lifxdevice.Surface, width, height int) lifxeffects.Frame {
+	caps := frameCapabilities(intent, surface, width, height)
+	span := max(caps.Width*caps.Height, 1)
+	drift := lifxeffects.NewGradientDrift(lifxeffects.GradientDriftConfig{
+		Capabilities: caps,
+		Palette:      effectPalette(intent.Palette, intent.Brightness),
+		Axis:         lifxeffects.FlowAxisHorizontal,
+		Direction:    lifxeffects.FlowDirectionReverse,
+		Sampling:     lifxeffects.FlowSamplingStep,
+	})
+	return drift.FrameAtPhase(float64(intent.BeatIndex)/float64(span), time.Duration(intent.DurationMS)*time.Millisecond)
 }
 
 func frameCapabilities(intent EffectIntent, surface lifxdevice.Surface, width, height int) lifxeffects.Capabilities {

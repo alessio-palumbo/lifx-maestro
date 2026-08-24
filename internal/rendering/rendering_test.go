@@ -432,15 +432,28 @@ func TestRenderMultiZonePulseMovesWithinABeat(t *testing.T) {
 	}
 }
 
-// A travelling effect should cross the surface in a fixed musical time, so a long
-// strip does not crawl.
-func TestMultiZonePulseCrossesTheStripInABar(t *testing.T) {
-	const zones = 16
-	start := headPosition(EffectIntent{BeatIndex: 0}, zones, beatsPerTraversal)
-	afterABar := headPosition(EffectIntent{BeatIndex: beatsPerTraversal}, zones, beatsPerTraversal)
+// A travelling effect should complete a traversal in a fixed musical time, so a
+// long strip does not crawl.
+func TestMultiZonePulseRepeatsAfterABar(t *testing.T) {
+	device := devices.DeviceInfo{
+		ID: "strip",
+		Capabilities: devices.DeviceCapabilities{
+			Kind: devices.DeviceKindMultiZone,
+			Surface: lifxdevice.Surface{
+				LightType: lifxdevice.LightTypeMultiZone,
+				Zones:     16,
+			},
+		},
+	}
 
-	if travelled := afterABar - start; travelled < float64(zones) {
-		t.Fatalf("head travelled %.1f zones in a bar, want the full %d", travelled, zones)
+	start := testIntent(IntentPulse)
+	start.BeatIndex = 0
+
+	afterABar := start
+	afterABar.BeatIndex = beatsPerTraversal
+
+	if !sameLevels(zoneLevels(t, device, start), zoneLevels(t, device, afterABar)) {
+		t.Fatal("pulse did not return to its start position after one bar")
 	}
 }
 

@@ -89,7 +89,7 @@ func (MultiZoneRenderer) Render(intent EffectIntent, device devices.DeviceInfo) 
 	case IntentPulse:
 		frame = multiZonePulseFrame(intent, surface, count, 1)
 	default:
-		frame = driftFrame(gradientFrame(intent, surface, count, 1), intent.BeatIndex)
+		frame = driftFrame(intent, surface, count, 1)
 	}
 
 	deviceFrames := adaptFrame(frame, surface)
@@ -113,7 +113,7 @@ func (MatrixRenderer) Render(intent EffectIntent, device devices.DeviceInfo) []t
 	case IntentSweep, IntentMatrixWave:
 		frame = matrixWaveFrame(intent, surface, width, height)
 	default:
-		frame = driftFrame(gradientFrame(intent, surface, width, height), intent.BeatIndex)
+		frame = driftFrame(intent, surface, width, height)
 	}
 
 	deviceFrames := adaptFrame(frame, surface)

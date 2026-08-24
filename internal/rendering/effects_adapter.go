@@ -2,7 +2,6 @@ package rendering
 
 import (
 	"math"
-	"time"
 
 	lifxdevice "github.com/alessio-palumbo/lifxlan-go/pkg/device"
 	lifxeffects "github.com/alessio-palumbo/lifxlan-go/pkg/effects"
@@ -44,31 +43,6 @@ func matrixColorsEvent(intent EffectIntent, target string, frame lifxeffects.Dev
 			DurationMS: durationMS(frame, intent.DurationMS),
 			Pixels:     matrixColorParamsFromEffects(frame.Colors, width, height),
 		}),
-	}
-}
-
-func gradientFrame(intent EffectIntent, surface lifxdevice.Surface, width, height int) lifxeffects.Frame {
-	effect := lifxeffects.NewGradient(lifxeffects.GradientConfig{
-		Capabilities: effectCapabilities(surface, width, height),
-		Palette:      effectPalette(intent.Palette, intent.Brightness),
-	})
-	frame, ok := effect.Next(time.Duration(intent.DurationMS) * time.Millisecond)
-	if !ok {
-		return frameFromPaletteColors(intent.Palette.GradientStops(width*height), width, height, intent.Brightness, intent.DurationMS)
-	}
-	return frame
-}
-
-func frameFromPaletteColors(colors []palette.Color, width, height int, brightness float64, durationMS int64) lifxeffects.Frame {
-	frameColors := make([]lifxeffects.Color, len(colors))
-	for i, color := range colors {
-		frameColors[i] = effectColor(color, brightness)
-	}
-	return lifxeffects.Frame{
-		Colors:   frameColors,
-		Width:    width,
-		Height:   height,
-		Duration: time.Duration(durationMS) * time.Millisecond,
 	}
 }
 
@@ -211,17 +185,6 @@ func zoneCount(device devices.DeviceInfo) int {
 		return device.Capabilities.Surface.Zones
 	}
 	return 1
-}
-
-func positiveModulo(index, size int) int {
-	if size <= 0 {
-		return 0
-	}
-	index %= size
-	if index < 0 {
-		index += size
-	}
-	return index
 }
 
 func matrixDimensions(device devices.DeviceInfo) (int, int) {
