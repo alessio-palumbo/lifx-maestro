@@ -140,6 +140,7 @@ type AppState = {
   previewStarting: boolean;
   needsRegeneration: boolean;
   regenerationReasons: {
+    song: boolean;
     style: boolean;
     target: boolean;
     devices: boolean;
@@ -173,6 +174,7 @@ const state: AppState = {
   previewStarting: false,
   needsRegeneration: false,
   regenerationReasons: {
+    song: false,
     style: false,
     target: false,
     devices: false,
@@ -272,6 +274,7 @@ function renderToolbar() {
   const styleOptions = state.styles
     .map((style) => `<option value="${style}" ${session?.style === style ? 'selected' : ''}>${style}</option>`)
     .join('');
+  const generateLabel = state.needsRegeneration && !state.regenerationReasons.song ? 'Regenerate' : 'Generate';
   return `
     <header class="toolbar">
       <div class="brand">
@@ -298,7 +301,7 @@ function renderToolbar() {
           <select id="style" class="select-control">${styleOptions}</select>
         </label>
         <button id="choose-song" class="tool primary" ${state.loading ? 'disabled' : ''}>Choose Song</button>
-        <button id="regenerate" class="tool ${state.needsRegeneration ? 'attention' : ''}" ${state.loading || !selectedSongPath() ? 'disabled' : ''}>${state.needsRegeneration ? 'Regenerate' : 'Generate'}</button>
+        <button id="regenerate" class="tool ${state.needsRegeneration ? 'attention' : ''}" ${state.loading || !selectedSongPath() ? 'disabled' : ''}>${generateLabel}</button>
         <button id="save" class="tool icon-action download-action" title="Download selected timeline JSON" aria-label="Download selected timeline JSON" ${!session ? 'disabled' : ''}>
           <svg class="download-icon" viewBox="0 0 24 24" aria-hidden="true">
             <path d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14" />
@@ -914,6 +917,8 @@ async function chooseSong() {
     state.generatedStyle = '';
     state.status = `Selected ${fileName(path)}; press Generate to analyze`;
     state.session = emptySession(path);
+    state.regenerationReasons.song = true;
+    updateNeedsRegeneration();
     try {
       const durationMS = await AudioDuration(path);
       state.session.timeline.duration_ms = durationMS;
@@ -1570,6 +1575,7 @@ function markRegenerationRequired(reason: keyof AppState['regenerationReasons'],
 
 function clearRegenerationReasons() {
   state.regenerationReasons = {
+    song: false,
     style: false,
     target: false,
     devices: false,
@@ -1582,6 +1588,9 @@ function updateNeedsRegeneration() {
 }
 
 function regenerationMessage() {
+  if (state.regenerationReasons.song) {
+    return 'Generate a timeline for the selected song before playing lights.';
+  }
   if (state.regenerationReasons.style) {
     return 'The selected style needs timeline regeneration before playing lights.';
   }
