@@ -460,4 +460,4 @@ python3 -m py_compile analyzer/analyze.py
 - Section detection is heuristic and approximate.
 - Multizone and matrix rendering is intentionally simple: gradients, sweeps, pulses, and full color arrays only.
 - No AI generation or waveform view yet.
-- Released macOS and Windows builds are unsigned, so the OS warns on first launch.
+- Released macOS builds are signed and notarized. Windows builds remain unsigned.
