@@ -28,6 +28,9 @@ func TestPerformUsesTargetFlag(t *testing.T) {
 	if !flags["target"] {
 		t.Fatal("missing target flag")
 	}
+	if !flags["generation"] {
+		t.Fatal("missing generation flag")
+	}
 	if flags["devices"] {
 		t.Fatal("devices flag should not be exposed")
 	}

@@ -222,6 +222,67 @@ func TestGenerateDoesNotOverlapTransitionsForSameTargetAction(t *testing.T) {
 	}
 }
 
+func TestGenerateMusicalLayersUsesStreamAccents(t *testing.T) {
+	song := testSong()
+	song.Streams = []analysis.Stream{
+		{ID: "low", Label: "Low / bass", Energy: song.Energy, Accents: []int64{250, 1250, 2250}},
+		{ID: "high", Label: "Percussion / highs", Energy: song.Energy, Accents: []int64{500, 1000, 1500, 2000}},
+		{ID: "mid", Label: "Mids / vocal", Energy: song.Energy, Accents: []int64{750, 2750}},
+		{ID: "full", Label: "Full mix / accents", Energy: song.Energy, Accents: []int64{3000}},
+	}
+
+	tl, err := Generate(song, Options{
+		Mode:   GenerationModeMusicalLayers,
+		Target: "all",
+		Devices: []devices.DeviceInfo{
+			{ID: "desk", Capabilities: devices.DeviceCapabilities{Kind: devices.DeviceKindSingleZone, HasColor: true, HasKelvin: true}},
+			{ID: "strip", Capabilities: devices.DeviceCapabilities{Kind: devices.DeviceKindMultiZone, HasColor: true, HasKelvin: true, ZoneCount: 8}},
+			{ID: "tile", Capabilities: devices.DeviceCapabilities{Kind: devices.DeviceKindMatrix, HasColor: true, HasKelvin: true, MatrixWidth: 4, MatrixHeight: 4}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !hasTargetActionAt(tl.Events, "strip", "set_zone_colors", 250) {
+		t.Fatal("expected multizone target to follow low stream accents")
+	}
+	if !hasTargetActionAt(tl.Events, "tile", "set_matrix_colors", 500) {
+		t.Fatal("expected matrix target to follow high stream accents")
+	}
+	if !hasTargetActionAt(tl.Events, "desk", "set_color", 750) {
+		t.Fatal("expected single-zone target to follow mid stream accents")
+	}
+}
+
+func TestGenerateMusicalLayersHonorsAssignments(t *testing.T) {
+	song := testSong()
+	song.Streams = []analysis.Stream{
+		{ID: "low", Label: "Low / bass", Energy: song.Energy, Accents: []int64{250}},
+		{ID: "mid", Label: "Mids / vocal", Energy: song.Energy, Accents: []int64{750}},
+		{ID: "full", Label: "Full mix / accents", Energy: song.Energy, Accents: nil},
+	}
+
+	tl, err := Generate(song, Options{
+		Mode:        GenerationModeMusicalLayers,
+		Target:      "all",
+		Assignments: []StreamAssignment{{Stream: "low", DeviceIDs: []string{"desk"}}},
+		Devices: []devices.DeviceInfo{
+			{ID: "desk", Capabilities: devices.DeviceCapabilities{Kind: devices.DeviceKindSingleZone, HasColor: true, HasKelvin: true}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !hasTargetActionAt(tl.Events, "desk", "set_color", 250) {
+		t.Fatal("expected assigned desk to follow low stream")
+	}
+	if hasTargetActionAt(tl.Events, "desk", "set_color", 750) {
+		t.Fatal("expected assigned desk not to follow default mid stream")
+	}
+}
+
 func TestNormalizeTimelineEventsCapsOverlappingTransition(t *testing.T) {
 	events := normalizeTimelineEvents([]timeline.Event{
 		setColorEvent(1000, "desk", 5000),
@@ -291,6 +352,15 @@ func hasAction(events []timeline.Event, action string) bool {
 func hasTargetAction(events []timeline.Event, target string, action string) bool {
 	for _, event := range events {
 		if event.Target == target && event.Action == action {
+			return true
+		}
+	}
+	return false
+}
+
+func hasTargetActionAt(events []timeline.Event, target string, action string, timeMS int64) bool {
+	for _, event := range events {
+		if event.Target == target && event.Action == action && event.TimeMS == timeMS {
 			return true
 		}
 	}

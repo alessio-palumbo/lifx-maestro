@@ -17,6 +17,7 @@ import (
 type Options struct {
 	Style  string
 	Target string
+	Mode   generation.GenerationMode
 	// Analyzer runs the audio analysis. Leave it unset to resolve the analyzer
 	// this build ships with: the bundled executable, or a development Python
 	// interpreter plus analyzer/analyze.py.
@@ -75,6 +76,7 @@ func Run(ctx context.Context, audioPath string, controller devices.DeviceControl
 		Name:    audio.TimelineName(audioPath),
 		Target:  options.Target,
 		Style:   options.Style,
+		Mode:    options.Mode,
 		Devices: deviceInfos(controller),
 	})
 	if err != nil {

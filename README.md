@@ -6,7 +6,7 @@ It ships as a Wails GUI, with `maestro` as an equivalent CLI for scripting and d
 The current implementation can:
 
 - analyze MP3/WAV audio, with no Python install needed in released builds
-- estimate tempo, beats, energy, and rough song sections
+- estimate tempo, beats, energy, rough song sections, and spectral musical layers
 - generate deterministic timeline JSON
 - play timelines against LIFX LAN devices
 - perform audio and lighting together from the same audio clock
@@ -154,6 +154,7 @@ Output includes:
 - `beats`
 - `energy`
 - `sections`
+- `streams`: low/bass, mids/vocal, percussion/highs, and full-mix accents
 
 ### `maestro generate`
 
@@ -167,6 +168,7 @@ Options:
 
 - `--output string`: timeline JSON output path. If omitted, writes to `projects/<song-name>.json`
 - `--style string`: generation style
+- `--generation string`: generation mode. Default: `song_wide`. Available: `song_wide`, `musical_layers`
 - `--target string`: timeline target selector. Default: `all`
 - `--python string`: Python executable to use instead of the bundled analyzer. Default: the bundled analyzer in released builds, otherwise `analyzer/.venv/bin/python`, then `.venv/bin/python`, then `python3`
 
@@ -175,6 +177,7 @@ Examples:
 ```bash
 go run ./cmd/maestro generate samples/song.mp3 --output projects/song.json
 go run ./cmd/maestro generate samples/song.mp3 --style neon --target desk
+go run ./cmd/maestro generate samples/song.mp3 --generation musical_layers --target tv,desk
 go run ./cmd/maestro generate samples/song.mp3 --style minimal --python .venv/bin/python
 ```
 
@@ -191,6 +194,7 @@ Options:
 - `--dry-run`: use the mock controller instead of real LIFX devices
 - `--verbose`: print analysis, scheduler, and playback logs
 - `--style string`: generation style
+- `--generation string`: generation mode. Default: `song_wide`. Available: `song_wide`, `musical_layers`
 - `--target string`: target selector. Default: `all`
 - `--python string`: Python executable to use instead of the bundled analyzer. Default: the bundled analyzer in released builds, otherwise `analyzer/.venv/bin/python`, then `.venv/bin/python`, then `python3`
 
@@ -201,6 +205,7 @@ go run ./cmd/maestro perform samples/song.mp3 --dry-run --verbose
 go run ./cmd/maestro perform samples/song.mp3 --style synthwave --target all
 go run ./cmd/maestro perform samples/song.mp3 --style cinematic --target desk
 go run ./cmd/maestro perform samples/song.mp3 --style neon --target tv,desk
+go run ./cmd/maestro perform samples/song.mp3 --generation musical_layers --target tv,desk
 ```
 
 During `perform`, audio playback owns the master clock. The lighting scheduler follows the audio position rather than using an independent wall-clock timer.
@@ -286,6 +291,11 @@ Styles influence:
 - timing offsets
 
 If `--style` is omitted, generation defaults to `synthwave`.
+
+Generation modes:
+
+- `song_wide`: the default. All selected devices follow the global beat, energy, and section analysis.
+- `musical_layers`: selected devices are assigned to spectral streams. Multizone devices default to low/bass motion, matrix devices default to percussion/high accents, single-zone devices default to mids/vocal fades, and all devices still receive full-mix section accents.
 
 ## Device Targets
 

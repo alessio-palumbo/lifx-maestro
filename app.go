@@ -83,6 +83,7 @@ type EditorSession struct {
 	SongPath   string                `json:"song_path"`
 	SongName   string                `json:"song_name"`
 	Style      string                `json:"style"`
+	Generation string                `json:"generation"`
 	Target     string                `json:"target"`
 	Analysis   analysis.SongAnalysis `json:"analysis"`
 	Timeline   EditorTimeline        `json:"timeline"`
@@ -179,6 +180,10 @@ func (a *App) Styles() []string {
 	return generation.AvailableStyles()
 }
 
+func (a *App) GenerationModes() []string {
+	return generation.AvailableModes()
+}
+
 func (a *App) DiscoverDevices() ([]EditorDevice, error) {
 	controller, err := a.lifxController()
 	if err != nil {
@@ -223,12 +228,12 @@ func (a *App) ChooseTimelineSavePath(defaultName string) (string, error) {
 	})
 }
 
-func (a *App) Generate(audioPath string, style string, target string, editorDevices []EditorDevice) (*EditorSession, error) {
+func (a *App) Generate(audioPath string, style string, target string, generationMode string, assignments []generation.StreamAssignment, editorDevices []EditorDevice) (*EditorSession, error) {
 	result, err := a.Analyze(audioPath)
 	if err != nil {
 		return nil, err
 	}
-	return a.GenerateFromAnalysis(audioPath, result, style, target, editorDevices)
+	return a.GenerateFromAnalysis(audioPath, result, style, target, generationMode, assignments, editorDevices)
 }
 
 // forceTourEnv shows the walkthrough on demand. Development builds have no
@@ -329,7 +334,7 @@ func (a *App) ensureAnalyzerInstalled() (string, error) {
 	return analyzerbin.EnsureInstalled()
 }
 
-func (a *App) GenerateFromAnalysis(audioPath string, song analysis.SongAnalysis, style string, target string, editorDevices []EditorDevice) (*EditorSession, error) {
+func (a *App) GenerateFromAnalysis(audioPath string, song analysis.SongAnalysis, style string, target string, generationMode string, assignments []generation.StreamAssignment, editorDevices []EditorDevice) (*EditorSession, error) {
 	if strings.TrimSpace(audioPath) == "" {
 		return nil, fmt.Errorf("audio path is required")
 	}
@@ -345,8 +350,14 @@ func (a *App) GenerateFromAnalysis(audioPath string, song analysis.SongAnalysis,
 	if target == "" {
 		target = "all"
 	}
+	if generationMode == "" {
+		generationMode = string(generation.GenerationModeSongWide)
+	}
+	if err := generation.ValidateMode(generation.GenerationMode(generationMode)); err != nil {
+		return nil, err
+	}
 
-	return buildEditorSessionWithDevices(audioPath, filepath.Base(audioPath), style, target, "generated", song, editorDevices)
+	return buildEditorSessionWithDevices(audioPath, filepath.Base(audioPath), style, target, generationMode, assignments, "generated", song, editorDevices)
 }
 
 func (a *App) SaveTimeline(request SaveTimelineRequest) error {
@@ -526,19 +537,21 @@ func (a *App) lifxController() (*devices.LifxDeviceController, error) {
 }
 
 func buildEditorSession(songPath string, songName string, style string, target string, source string, song analysis.SongAnalysis) (*EditorSession, error) {
-	return buildEditorSessionWithDevices(songPath, songName, style, target, source, song, nil)
+	return buildEditorSessionWithDevices(songPath, songName, style, target, string(generation.GenerationModeSongWide), nil, source, song, nil)
 }
 
-func buildEditorSessionWithDevices(songPath string, songName string, style string, target string, source string, song analysis.SongAnalysis, editorDevices []EditorDevice) (*EditorSession, error) {
+func buildEditorSessionWithDevices(songPath string, songName string, style string, target string, generationMode string, assignments []generation.StreamAssignment, source string, song analysis.SongAnalysis, editorDevices []EditorDevice) (*EditorSession, error) {
 	infos := editorDeviceInfosFromEditor(editorDevices)
 	if len(infos) == 0 {
 		infos = editorDeviceInfos()
 	}
 	tl, err := generation.Generate(song, generation.Options{
-		Name:    songName,
-		Target:  target,
-		Style:   style,
-		Devices: infos,
+		Name:        songName,
+		Target:      target,
+		Style:       style,
+		Mode:        generation.GenerationMode(generationMode),
+		Assignments: assignments,
+		Devices:     infos,
 	})
 	if err != nil {
 		return nil, err
@@ -548,6 +561,7 @@ func buildEditorSessionWithDevices(songPath string, songName string, style strin
 		SongPath:   songPath,
 		SongName:   songName,
 		Style:      style,
+		Generation: generationMode,
 		Target:     target,
 		Analysis:   song,
 		Timeline:   editorTimelineFromTimeline(*tl),

@@ -32,6 +32,7 @@ def main():
         "beats": beats,
         "energy": energy,
         "sections": sections(y, sr, duration_ms, energy, onset_env, tempo),
+        "streams": streams(y, sr, energy, onset_env, beats),
     }
     print(json.dumps(result, separators=(",", ":")))
     return 0
@@ -92,6 +93,92 @@ def normalize_energy_points(points):
     for point in points:
         point["value"] = round(point["value"] / peak, 4) if peak > 0 else 0.0
     return points
+
+
+def streams(y, sr, full_energy, full_onset_env, beats):
+    hop_length = 512
+    frame_length = 2048
+    bands = [
+        ("low", "Low / bass", 20, 250),
+        ("mid", "Mids / vocal", 250, 4000),
+        ("high", "Percussion / highs", 4000, min(12000, sr / 2)),
+    ]
+
+    result = []
+    for stream_id, label, low_hz, high_hz in bands:
+        band = band_limited_audio(y, sr, low_hz, high_hz)
+        rms = librosa.feature.rms(y=band, frame_length=frame_length, hop_length=hop_length)[0]
+        times = librosa.frames_to_time(np.arange(len(rms)), sr=sr, hop_length=hop_length)
+        energy = normalize_energy_points(downsample_energy(times, rms, step_ms=500))
+        onset_env = librosa.onset.onset_strength(y=band, sr=sr, hop_length=hop_length)
+        result.append({
+            "id": stream_id,
+            "label": label,
+            "energy": energy,
+            "accents": accents_from_onsets(onset_env, sr, hop_length, min_gap_ms=120),
+        })
+
+    result.append({
+        "id": "full",
+        "label": "Full mix / accents",
+        "energy": full_energy,
+        "accents": accents_from_onsets(full_onset_env, sr, hop_length, fallback_beats=beats, min_gap_ms=180),
+    })
+    return result
+
+
+def band_limited_audio(y, sr, low_hz, high_hz):
+    if len(y) == 0:
+        return y
+
+    spectrum = np.fft.rfft(y)
+    freqs = np.fft.rfftfreq(len(y), d=1.0 / sr)
+    mask = (freqs >= low_hz) & (freqs < high_hz)
+    filtered = np.fft.irfft(spectrum * mask, n=len(y))
+    return filtered.astype(np.float32)
+
+
+def accents_from_onsets(onset_env, sr, hop_length, fallback_beats=None, min_gap_ms=120):
+    if len(onset_env) == 0:
+        return fallback_beats or []
+
+    normalized = normalize(np.asarray(onset_env))
+    threshold = max(float(np.percentile(normalized, 72)), float(np.mean(normalized) + np.std(normalized) * 0.15))
+    try:
+        peaks = librosa.util.peak_pick(
+            normalized,
+            pre_max=3,
+            post_max=3,
+            pre_avg=8,
+            post_avg=8,
+            delta=max(0.03, threshold * 0.25),
+            wait=3,
+        )
+    except Exception:
+        peaks = np.array([], dtype=int)
+
+    accents = []
+    for frame in peaks:
+        if normalized[frame] < threshold:
+            continue
+        time_s = librosa.frames_to_time(frame, sr=sr, hop_length=hop_length)
+        accents.append(int(round(float(time_s) * 1000)))
+
+    if not accents and fallback_beats:
+        return fallback_beats
+    return coalesce_accents(accents, min_gap_ms)
+
+
+def coalesce_accents(accents, min_gap_ms):
+    if not accents:
+        return accents
+    out = [accents[0]]
+    last = accents[0]
+    for accent in accents[1:]:
+        if accent - last >= min_gap_ms:
+            out.append(accent)
+            last = accent
+    return out
 
 
 def sections(y, sr, duration_ms, energy, onset_env, tempo):

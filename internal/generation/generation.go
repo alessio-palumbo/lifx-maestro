@@ -14,17 +14,33 @@ import (
 )
 
 type Config struct {
-	Style                    string  `json:"style"`
-	BrightnessScale          float64 `json:"brightness_scale"`
-	TransitionAggressiveness float64 `json:"transition_aggressiveness"`
+	Style                    string             `json:"style"`
+	BrightnessScale          float64            `json:"brightness_scale"`
+	TransitionAggressiveness float64            `json:"transition_aggressiveness"`
+	Mode                     GenerationMode     `json:"mode,omitempty"`
+	Assignments              []StreamAssignment `json:"assignments,omitempty"`
+}
+
+type GenerationMode string
+
+const (
+	GenerationModeSongWide      GenerationMode = "song_wide"
+	GenerationModeMusicalLayers GenerationMode = "musical_layers"
+)
+
+type StreamAssignment struct {
+	Stream    string   `json:"stream"`
+	DeviceIDs []string `json:"device_ids"`
 }
 
 type Options struct {
-	Name    string
-	Target  string
-	Style   string
-	Config  Config
-	Devices []devices.DeviceInfo
+	Name        string
+	Target      string
+	Style       string
+	Mode        GenerationMode
+	Assignments []StreamAssignment
+	Config      Config
+	Devices     []devices.DeviceInfo
 }
 
 func Generate(song analysis.SongAnalysis, options Options) (*timeline.Timeline, error) {
@@ -44,6 +60,9 @@ func Generate(song analysis.SongAnalysis, options Options) (*timeline.Timeline, 
 		return nil, err
 	}
 	style = applyConfig(style, options.Config)
+	if err := ValidateMode(generationMode(options)); err != nil {
+		return nil, err
+	}
 
 	targets := targetsFor(options.Target, options.Devices)
 	songSections := sections.FromAnalysis(song)
@@ -56,11 +75,15 @@ func Generate(song analysis.SongAnalysis, options Options) (*timeline.Timeline, 
 		},
 	}
 
-	for i, section := range songSections {
-		if i > 0 {
-			tl.Events = append(tl.Events, transitionEvents(song, section, style, targets, i)...)
+	if generationMode(options) == GenerationModeMusicalLayers {
+		tl.Events = append(tl.Events, layeredEvents(song, style, targets, songSections, generationAssignments(options))...)
+	} else {
+		for i, section := range songSections {
+			if i > 0 {
+				tl.Events = append(tl.Events, transitionEvents(song, section, style, targets, i)...)
+			}
+			tl.Events = append(tl.Events, sectionEvents(song, section, style, targets, i)...)
 		}
-		tl.Events = append(tl.Events, sectionEvents(song, section, style, targets, i)...)
 	}
 
 	if len(tl.Events) == 1 {
@@ -70,6 +93,100 @@ func Generate(song analysis.SongAnalysis, options Options) (*timeline.Timeline, 
 	tl.SortEvents()
 	tl.Events = normalizeTimelineEvents(tl.Events)
 	return tl, nil
+}
+
+func layeredEvents(song analysis.SongAnalysis, style styles.Style, targets []effects.Target, songSections []sections.Section, assignments []StreamAssignment) []timeline.Event {
+	if len(song.Streams) == 0 {
+		var events []timeline.Event
+		for i, section := range songSections {
+			if i > 0 {
+				events = append(events, transitionEvents(song, section, style, targets, i)...)
+			}
+			events = append(events, sectionEvents(song, section, style, targets, i)...)
+		}
+		return events
+	}
+
+	streamTargets := assignedStreamTargets(targets, assignments)
+	var events []timeline.Event
+	for i, section := range songSections {
+		if i > 0 {
+			events = append(events, transitionEvents(song, section, style, targetGroup(streamTargets, "full", targets), i)...)
+		}
+		events = append(events, streamSectionEvents(song, section, style, streamTargets, i)...)
+	}
+	return events
+}
+
+func streamSectionEvents(song analysis.SongAnalysis, section sections.Section, style styles.Style, streamTargets map[string][]effects.Target, sectionIndex int) []timeline.Event {
+	var events []timeline.Event
+	streams := streamsByID(song.Streams)
+	for _, spec := range []struct {
+		id       string
+		section  sections.Type
+		effect   string
+		beatStep int
+		duration float64
+		minScale float64
+		maxScale float64
+		shift    int
+		minGapMS int64
+	}{
+		{id: "low", section: sections.TypeDrop, effect: "sweep", beatStep: 2, duration: 1.45, minScale: 0.9, maxScale: 1.05, minGapMS: 260},
+		{id: "high", section: sections.TypeDrop, effect: "sweep", beatStep: 1, duration: 0.45, minScale: 0.75, maxScale: 1.18, shift: 1, minGapMS: 150},
+		{id: "mid", section: sections.TypeBreakdown, effect: "breathing", beatStep: 4, duration: 2.2, minScale: 0.85, maxScale: 0.78, shift: 2, minGapMS: 360},
+	} {
+		stream, ok := streams[spec.id]
+		targets := streamTargets[spec.id]
+		if !ok || len(targets) == 0 {
+			continue
+		}
+		streamSection := section
+		streamSection.Type = spec.section
+		streamSection.Energy = meanEnergy(stream.Energy, section.StartMS, section.EndMS, section.Energy)
+		ctx := effects.Context{
+			Section:     streamSection,
+			Beats:       thinTimes(streamBeatsInSection(stream.Accents, song.Beats, section), spec.minGapMS),
+			Energy:      stream.Energy,
+			Targets:     targets,
+			Palette:     style.Palette,
+			MinBright:   minBrightness(section, style) * spec.minScale,
+			MaxBright:   maxBrightness(section, style) * spec.maxScale,
+			DurationMS:  max(45, int64(float64(effectDuration(song.BPM, streamSection, style))*spec.duration)),
+			BeatStep:    spec.beatStep,
+			TargetShift: sectionIndex + spec.shift,
+		}
+		switch spec.effect {
+		case "breathing":
+			events = append(events, effects.Breathing{}.Generate(ctx)...)
+			ctx.DurationMS = max(90, ctx.DurationMS/4)
+			events = append(events, effects.Pulse{}.Generate(ctx)...)
+		case "sweep":
+			events = append(events, effects.Sweep{}.Generate(ctx)...)
+		default:
+			events = append(events, effects.Pulse{}.Generate(ctx)...)
+		}
+	}
+
+	if full, ok := streams["full"]; ok {
+		targets := targetGroup(streamTargets, "full", nil)
+		if len(targets) > 0 {
+			ctx := effects.Context{
+				Section:     section,
+				Beats:       majorAccentsInSection(thinTimes(full.Accents, 300), section),
+				Energy:      full.Energy,
+				Targets:     targets,
+				Palette:     style.Palette,
+				MinBright:   minBrightness(section, style),
+				MaxBright:   clamp(maxBrightness(section, style)*1.08, 0.08, 1),
+				DurationMS:  max(45, effectDuration(song.BPM, section, style)/2),
+				BeatStep:    1,
+				TargetShift: sectionIndex,
+			}
+			events = append(events, effects.Pulse{}.Generate(ctx)...)
+		}
+	}
+	return events
 }
 
 func sectionEvents(song analysis.SongAnalysis, section sections.Section, style styles.Style, targets []effects.Target, sectionIndex int) []timeline.Event {
@@ -212,6 +329,162 @@ func applyConfig(style styles.Style, config Config) styles.Style {
 		style.TransitionAggressiveness = config.TransitionAggressiveness
 	}
 	return style
+}
+
+func generationMode(options Options) GenerationMode {
+	if options.Config.Mode != "" {
+		return options.Config.Mode
+	}
+	if options.Mode != "" {
+		return options.Mode
+	}
+	return GenerationModeSongWide
+}
+
+func generationAssignments(options Options) []StreamAssignment {
+	if len(options.Config.Assignments) > 0 {
+		return options.Config.Assignments
+	}
+	return options.Assignments
+}
+
+func streamsByID(streams []analysis.Stream) map[string]analysis.Stream {
+	out := make(map[string]analysis.Stream, len(streams))
+	for _, stream := range streams {
+		out[stream.ID] = stream
+	}
+	return out
+}
+
+func assignedStreamTargets(targets []effects.Target, assignments []StreamAssignment) map[string][]effects.Target {
+	out := make(map[string][]effects.Target)
+	if len(assignments) > 0 {
+		byID := make(map[string]effects.Target, len(targets))
+		for _, target := range targets {
+			byID[strings.ToLower(target.DeviceID)] = target
+		}
+		for _, assignment := range assignments {
+			stream := strings.ToLower(strings.TrimSpace(assignment.Stream))
+			if stream == "" {
+				continue
+			}
+			for _, id := range assignment.DeviceIDs {
+				target, ok := byID[strings.ToLower(strings.TrimSpace(id))]
+				if ok {
+					out[stream] = append(out[stream], target)
+					if stream != "full" {
+						out["full"] = append(out["full"], target)
+					}
+				}
+			}
+		}
+		for stream, assigned := range out {
+			out[stream] = assignTargetIndexes(uniqueTargets(assigned))
+		}
+		return out
+	}
+
+	for _, target := range targets {
+		switch target.Capabilities.Kind {
+		case devices.DeviceKindMatrix:
+			out["high"] = append(out["high"], target)
+			out["full"] = append(out["full"], target)
+		case devices.DeviceKindMultiZone:
+			out["low"] = append(out["low"], target)
+			out["full"] = append(out["full"], target)
+		case devices.DeviceKindSingleZone:
+			out["mid"] = append(out["mid"], target)
+			out["full"] = append(out["full"], target)
+		}
+	}
+	for stream, assigned := range out {
+		out[stream] = assignTargetIndexes(uniqueTargets(assigned))
+	}
+	return out
+}
+
+func uniqueTargets(targets []effects.Target) []effects.Target {
+	seen := make(map[string]bool)
+	out := make([]effects.Target, 0, len(targets))
+	for _, target := range targets {
+		if target.DeviceID == "" || seen[target.DeviceID] {
+			continue
+		}
+		seen[target.DeviceID] = true
+		out = append(out, target)
+	}
+	return out
+}
+
+func targetGroup(groups map[string][]effects.Target, stream string, fallback []effects.Target) []effects.Target {
+	targets := groups[stream]
+	if len(targets) == 0 {
+		return fallback
+	}
+	return targets
+}
+
+func streamBeatsInSection(accents, fallbackBeats []int64, section sections.Section) []int64 {
+	beats := timesInSection(accents, section)
+	if len(beats) > 0 {
+		return beats
+	}
+	return timesInSection(fallbackBeats, section)
+}
+
+func majorAccentsInSection(accents []int64, section sections.Section) []int64 {
+	inSection := timesInSection(accents, section)
+	if len(inSection) <= 8 {
+		return inSection
+	}
+	step := max(1, len(inSection)/8)
+	var out []int64
+	for i, accent := range inSection {
+		if i%step == 0 {
+			out = append(out, accent)
+		}
+	}
+	return out
+}
+
+func timesInSection(times []int64, section sections.Section) []int64 {
+	var out []int64
+	for _, timeMS := range times {
+		if timeMS >= section.StartMS && timeMS < section.EndMS {
+			out = append(out, timeMS)
+		}
+	}
+	return out
+}
+
+func thinTimes(times []int64, minGapMS int64) []int64 {
+	if minGapMS <= 0 || len(times) < 2 {
+		return times
+	}
+	out := []int64{times[0]}
+	last := times[0]
+	for _, timeMS := range times[1:] {
+		if timeMS-last >= minGapMS {
+			out = append(out, timeMS)
+			last = timeMS
+		}
+	}
+	return out
+}
+
+func meanEnergy(points []analysis.EnergyPoint, startMS, endMS int64, fallback float64) float64 {
+	var total float64
+	var count int
+	for _, point := range points {
+		if point.TimeMS >= startMS && point.TimeMS < endMS {
+			total += point.Value
+			count++
+		}
+	}
+	if count == 0 {
+		return fallback
+	}
+	return total / float64(count)
 }
 
 func targetsFor(target string, infos []devices.DeviceInfo) []effects.Target {
@@ -366,10 +639,23 @@ func AvailableStyles() []string {
 	return styles.Names()
 }
 
+func AvailableModes() []string {
+	return []string{string(GenerationModeSongWide), string(GenerationModeMusicalLayers)}
+}
+
 func ValidateStyle(name string) error {
 	_, err := styles.Get(name)
 	if err != nil {
 		return fmt.Errorf("%w; available styles: %s", err, strings.Join(AvailableStyles(), ", "))
 	}
 	return nil
+}
+
+func ValidateMode(mode GenerationMode) error {
+	switch mode {
+	case "", GenerationModeSongWide, GenerationModeMusicalLayers:
+		return nil
+	default:
+		return fmt.Errorf("unsupported generation mode %q; available modes: %s", mode, strings.Join(AvailableModes(), ", "))
+	}
 }

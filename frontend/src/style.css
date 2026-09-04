@@ -322,6 +322,36 @@ button {
   gap: 6px;
 }
 
+.layer-panel {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0;
+  padding-top: 12px;
+  border-top: 1px solid #2a3039;
+}
+
+.layer-row {
+  display: grid;
+  gap: 5px;
+}
+
+.layer-row span {
+  overflow: hidden;
+  color: #c4cfdd;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.layer-select {
+  width: 100%;
+  min-height: 30px;
+  border: 1px solid #303743;
+  border-radius: 7px;
+  color: #edf1f7;
+  background: #1b2028;
+}
+
 .target-token {
   min-height: 28px;
   padding: 4px 8px;

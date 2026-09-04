@@ -20,6 +20,7 @@ type SongAnalysis struct {
 	Beats      []int64       `json:"beats"`
 	Energy     []EnergyPoint `json:"energy"`
 	Sections   []Section     `json:"sections,omitempty"`
+	Streams    []Stream      `json:"streams,omitempty"`
 }
 
 type EnergyPoint struct {
@@ -32,6 +33,13 @@ type Section struct {
 	EndMS   int64   `json:"end_ms"`
 	Type    string  `json:"type"`
 	Energy  float64 `json:"energy"`
+}
+
+type Stream struct {
+	ID      string        `json:"id"`
+	Label   string        `json:"label"`
+	Energy  []EnergyPoint `json:"energy"`
+	Accents []int64       `json:"accents"`
 }
 
 type Analyzer struct {
@@ -173,6 +181,27 @@ func (s SongAnalysis) Validate() error {
 		}
 		if section.Energy < 0 || section.Energy > 1 {
 			return fmt.Errorf("analysis section %d energy must be between 0 and 1", i)
+		}
+	}
+	for i, stream := range s.Streams {
+		if stream.ID == "" {
+			return fmt.Errorf("analysis stream %d id is required", i)
+		}
+		if stream.Label == "" {
+			return fmt.Errorf("analysis stream %d label is required", i)
+		}
+		for j, point := range stream.Energy {
+			if point.TimeMS < 0 {
+				return fmt.Errorf("analysis stream %d energy point %d time_ms must be non-negative", i, j)
+			}
+			if point.Value < 0 || point.Value > 1 {
+				return fmt.Errorf("analysis stream %d energy point %d value must be between 0 and 1", i, j)
+			}
+		}
+		for j, accent := range stream.Accents {
+			if accent < 0 {
+				return fmt.Errorf("analysis stream %d accent %d must be non-negative", i, j)
+			}
 		}
 	}
 	return nil

@@ -1,6 +1,6 @@
 import './style.css';
 
-import { Analyze, AnalyzerPreparing, AudioDuration, ChooseAudioFile, ChooseTimelineSavePath, DiscoverDevices, GenerateFromAnalysis, MasterBrightness, PausePreview, ResumePreview, SaveTimeline, SetMasterBrightness, StartAudioPreview, StartPreview, StopPreview, Styles } from '../wailsjs/go/main/App';
+import { Analyze, AnalyzerPreparing, AudioDuration, ChooseAudioFile, ChooseTimelineSavePath, DiscoverDevices, GenerateFromAnalysis, GenerationModes, MasterBrightness, PausePreview, ResumePreview, SaveTimeline, SetMasterBrightness, StartAudioPreview, StartPreview, StopPreview, Styles } from '../wailsjs/go/main/App';
 
 // The walkthrough only appears while the bundled analyzer is preparing itself,
 // which is the one moment there is a wait worth filling. Set LIFX_MAESTRO_FORCE_TOUR
@@ -77,6 +77,18 @@ type EnergyPoint = {
   value: number;
 };
 
+type AnalysisStream = {
+  id: string;
+  label: string;
+  energy: EnergyPoint[];
+  accents: number[];
+};
+
+type StreamAssignment = {
+  stream: string;
+  device_ids: string[];
+};
+
 type TimelineEvent = {
   time_ms: number;
   target: string;
@@ -94,6 +106,7 @@ type EditorSession = {
   song_path: string;
   song_name: string;
   style: string;
+  generation: string;
   target: string;
   analysis: {
     duration_ms: number;
@@ -101,6 +114,7 @@ type EditorSession = {
     beats: number[];
     energy: EnergyPoint[];
     sections?: AnalysisSection[];
+    streams?: AnalysisStream[];
   };
   timeline: Timeline;
   devices: DeviceInfo[];
@@ -119,6 +133,9 @@ type AppState = {
   session: EditorSession | null;
   devices: DeviceInfo[];
   styles: string[];
+  generationModes: string[];
+  generationMode: string;
+  layerAssignments: Record<string, string>;
   selectedEvent: number;
   selectedDevice: string;
   selectedAudioPath: string;
@@ -142,11 +159,14 @@ type AppState = {
   regenerationReasons: {
     song: boolean;
     style: boolean;
+    generation: boolean;
+    assignments: boolean;
     target: boolean;
     devices: boolean;
   };
   regenerationPrompt: boolean;
   generatedStyle: string;
+  generatedGenerationMode: string;
   zoomPxPerSecond: number;
   inspectorOpen: boolean;
   inspectorWidth: number;
@@ -159,6 +179,9 @@ const state: AppState = {
   session: null,
   devices: [],
   styles: [],
+  generationModes: ['song_wide', 'musical_layers'],
+  generationMode: 'song_wide',
+  layerAssignments: {},
   selectedEvent: -1,
   selectedDevice: 'all',
   selectedAudioPath: '',
@@ -176,11 +199,14 @@ const state: AppState = {
   regenerationReasons: {
     song: false,
     style: false,
+    generation: false,
+    assignments: false,
     target: false,
     devices: false,
   },
   regenerationPrompt: false,
   generatedStyle: '',
+  generatedGenerationMode: 'song_wide',
   zoomPxPerSecond: 16,
   inspectorOpen: false,
   inspectorWidth: 306,
@@ -223,6 +249,7 @@ async function bootstrap() {
   }
   try {
     state.styles = await Styles();
+    state.generationModes = await GenerationModes();
     state.status = 'Discovering LIFX LAN devices';
     render();
     state.devices = await DiscoverDevices() as unknown as DeviceInfo[];
@@ -274,6 +301,10 @@ function renderToolbar() {
   const styleOptions = state.styles
     .map((style) => `<option value="${style}" ${session?.style === style ? 'selected' : ''}>${style}</option>`)
     .join('');
+  const generation = session?.generation ?? state.generationMode;
+  const generationOptions = state.generationModes
+    .map((mode) => `<option value="${mode}" ${generation === mode ? 'selected' : ''}>${generationLabel(mode)}</option>`)
+    .join('');
   const generateLabel = state.needsRegeneration && !state.regenerationReasons.song ? 'Regenerate' : 'Generate';
   return `
     <header class="toolbar">
@@ -299,6 +330,10 @@ function renderToolbar() {
         <label class="field">
           <span>Style</span>
           <select id="style" class="select-control">${styleOptions}</select>
+        </label>
+        <label class="field">
+          <span>Generation</span>
+          <select id="generation-mode" class="select-control">${generationOptions}</select>
         </label>
         <button id="choose-song" class="tool primary" ${state.loading ? 'disabled' : ''}>Choose Song</button>
         <button id="regenerate" class="tool ${state.needsRegeneration ? 'attention' : ''}" ${state.loading || !selectedSongPath() ? 'disabled' : ''}>${generateLabel}</button>
@@ -477,9 +512,34 @@ function renderTargets() {
       </button>
       ${renderTokenGroup('Groups', groups, 'group')}
       ${renderTokenGroup('Locations', locations, 'location')}
+      ${renderLayerAssignments(session)}
       <div class="token-title device-title">Devices</div>
       ${deviceItems}
     </aside>
+  `;
+}
+
+function renderLayerAssignments(session: EditorSession | null) {
+  if ((session?.generation ?? state.generationMode) !== 'musical_layers') {
+    return '';
+  }
+  const selected = session ? selectedTargetDevices(session) : [];
+  if (selected.length === 0) {
+    return '';
+  }
+  ensureLayerAssignments();
+  return `
+    <div class="layer-panel">
+      <div class="token-title">Musical Layers</div>
+      ${selected.map((device) => `
+        <label class="layer-row">
+          <span>${escapeHTML(device.label || device.id)}</span>
+          <select class="layer-select" data-layer-device="${escapeAttr(device.id)}">
+            ${streamOptions(state.layerAssignments[device.id] || defaultStreamForDevice(device))}
+          </select>
+        </label>
+      `).join('')}
+    </div>
   `;
 }
 
@@ -747,6 +807,16 @@ function bindEvents() {
     handleStyleChanged(selectedStyle);
     render();
   });
+  document.querySelector('#generation-mode')?.addEventListener('change', () => {
+    const selectedMode = inputValue('generation-mode', state.generationMode);
+    state.generationMode = selectedMode;
+    if (state.session) {
+      state.session.generation = selectedMode;
+    }
+    ensureLayerAssignments();
+    handleGenerationChanged(selectedMode);
+    render();
+  });
   document.querySelector('#toggle-sidebar')?.addEventListener('click', () => {
     state.sidebarOpen = !state.sidebarOpen;
     render();
@@ -805,6 +875,17 @@ function bindEvents() {
     button.addEventListener('click', () => {
       toggleDeviceTarget(button.dataset.device ?? 'all');
       handleTargetChanged();
+      render();
+    });
+  });
+  document.querySelectorAll<HTMLSelectElement>('.layer-select[data-layer-device]').forEach((select) => {
+    select.addEventListener('change', () => {
+      const deviceID = select.dataset.layerDevice ?? '';
+      if (!deviceID) {
+        return;
+      }
+      state.layerAssignments[deviceID] = select.value;
+      handleAssignmentsChanged();
       render();
     });
   });
@@ -915,6 +996,7 @@ async function chooseSong() {
     clearRegenerationReasons();
     state.regenerationPrompt = false;
     state.generatedStyle = '';
+    state.generatedGenerationMode = state.generationMode;
     state.status = `Selected ${fileName(path)}; press Generate to analyze`;
     state.session = emptySession(path);
     state.regenerationReasons.song = true;
@@ -973,6 +1055,7 @@ async function discoverDevices() {
 
 async function generateForPath(path: string) {
   const style = inputValue('style', state.session?.style ?? 'synthwave');
+  const generation = inputValue('generation-mode', state.generationMode);
   const target = targetString();
   stopPlayback(false);
   state.error = null;
@@ -984,8 +1067,10 @@ async function generateForPath(path: string) {
     const songAnalysis = existingAnalysis ?? await Analyze(path);
     state.status = 'Generating timeline';
     render();
-    state.session = await GenerateFromAnalysis(path, songAnalysis as any, style, target, (state.session?.devices ?? state.devices) as any) as unknown as EditorSession;
+    state.session = await GenerateFromAnalysis(path, songAnalysis as any, style, target, generation, streamAssignments(generation), (state.session?.devices ?? state.devices) as any) as unknown as EditorSession;
     state.devices = state.session.devices;
+    state.generationMode = state.session.generation || generation;
+    ensureLayerAssignments();
     state.selectedAudioPath = path;
     state.targetTokens = splitTarget(state.session.target);
     state.selectedEvent = -1;
@@ -993,6 +1078,7 @@ async function generateForPath(path: string) {
     state.playheadMS = 0;
     clearRegenerationReasons();
     state.generatedStyle = state.session.style;
+    state.generatedGenerationMode = state.session.generation;
     state.regenerationPrompt = false;
     state.status = 'Generated editable timeline';
   } catch (error) {
@@ -1204,6 +1290,7 @@ function emptySession(path: string): EditorSession {
     song_path: path,
     song_name: name,
     style: inputValue('style', state.styles[0] ?? 'synthwave'),
+    generation: inputValue('generation-mode', state.generationMode),
     target,
     analysis: {
       duration_ms: 0,
@@ -1297,6 +1384,7 @@ function eventTargetLabel(session: EditorSession, event: TimelineEvent) {
 
 function handleTargetChanged() {
   syncSessionTarget();
+  ensureLayerAssignments();
   state.selectedEvent = -1;
   state.inspectorOpen = false;
   const session = state.session;
@@ -1310,6 +1398,31 @@ function handleTargetChanged() {
     return;
   }
   markRegenerationRequired('target', 'Target changed; regenerate to create device actions');
+}
+
+function handleGenerationChanged(selectedMode: string) {
+  if (state.session?.source !== 'generated') {
+    return;
+  }
+  if (selectedMode === state.generatedGenerationMode) {
+    state.regenerationReasons.generation = false;
+    state.regenerationReasons.assignments = false;
+    updateNeedsRegeneration();
+    if (!state.needsRegeneration) {
+      state.regenerationPrompt = false;
+    }
+    state.status = 'Generation mode restored to generated timeline';
+    return;
+  }
+  markRegenerationRequired('generation', 'Generation mode changed; regenerate to update choreography');
+  state.regenerationPrompt = true;
+}
+
+function handleAssignmentsChanged() {
+  if ((state.session?.generation ?? state.generationMode) !== 'musical_layers') {
+    return;
+  }
+  markRegenerationRequired('assignments', 'Layer assignments changed; regenerate to update choreography');
 }
 
 function selectedTargetDevices(session: EditorSession) {
@@ -1452,6 +1565,80 @@ function splitTarget(value: string) {
   return unique(value.split(',').map((part) => part.trim()).filter(Boolean));
 }
 
+const STREAMS: AnalysisStream[] = [
+  { id: 'low', label: 'Low / bass', energy: [], accents: [] },
+  { id: 'high', label: 'Percussion / highs', energy: [], accents: [] },
+  { id: 'mid', label: 'Mids / vocal', energy: [], accents: [] },
+  { id: 'full', label: 'Full mix / accents', energy: [], accents: [] },
+];
+
+function generationLabel(mode: string) {
+  switch (mode) {
+    case 'musical_layers':
+      return 'Musical layers';
+    case 'song_wide':
+      return 'Song-wide';
+    default:
+      return mode.replace(/_/g, ' ');
+  }
+}
+
+function streamLabel(streamID: string) {
+  return STREAMS.find((stream) => stream.id === streamID)?.label ?? streamID;
+}
+
+function streamOptions(selected: string) {
+  return STREAMS.map((stream) => `<option value="${stream.id}" ${stream.id === selected ? 'selected' : ''}>${stream.label}</option>`).join('');
+}
+
+function defaultStreamForDevice(device: DeviceInfo) {
+  switch (device.capabilities.kind) {
+    case 'matrix':
+      return 'high';
+    case 'multi_zone':
+      return 'low';
+    case 'single_zone':
+      return 'mid';
+    default:
+      return 'full';
+  }
+}
+
+function ensureLayerAssignments() {
+  const session = state.session;
+  if (!session) {
+    return;
+  }
+  const selected = selectedTargetDevices(session);
+  const selectedIDs = new Set(selected.map((device) => device.id));
+  for (const device of selected) {
+    if (!state.layerAssignments[device.id]) {
+      state.layerAssignments[device.id] = defaultStreamForDevice(device);
+    }
+  }
+  for (const deviceID of Object.keys(state.layerAssignments)) {
+    if (!selectedIDs.has(deviceID)) {
+      delete state.layerAssignments[deviceID];
+    }
+  }
+}
+
+function streamAssignments(mode = state.session?.generation ?? state.generationMode): StreamAssignment[] {
+  const session = state.session;
+  if (!session || mode !== 'musical_layers') {
+    return [];
+  }
+  ensureLayerAssignments();
+  const byStream = new Map<string, string[]>();
+  for (const [deviceID, stream] of Object.entries(state.layerAssignments)) {
+    if (!deviceID || !stream) {
+      continue;
+    }
+    byStream.set(stream, [...(byStream.get(stream) ?? []), deviceID]);
+  }
+  return Array.from(byStream.entries()).map(([stream, device_ids]) => ({ stream, device_ids }));
+}
+
 type TargetTokenKind = 'group' | 'location';
 
 function targetIncludes(value: string) {
@@ -1577,6 +1764,8 @@ function clearRegenerationReasons() {
   state.regenerationReasons = {
     song: false,
     style: false,
+    generation: false,
+    assignments: false,
     target: false,
     devices: false,
   };
@@ -1593,6 +1782,12 @@ function regenerationMessage() {
   }
   if (state.regenerationReasons.style) {
     return 'The selected style needs timeline regeneration before playing lights.';
+  }
+  if (state.regenerationReasons.generation) {
+    return 'The selected generation mode needs timeline regeneration before playing lights.';
+  }
+  if (state.regenerationReasons.assignments) {
+    return 'Layer assignments changed. Regenerate to update which musical layer each device follows.';
   }
   if (state.regenerationReasons.target) {
     return 'The selected target is not covered by the current timeline. Regenerate to create device actions.';

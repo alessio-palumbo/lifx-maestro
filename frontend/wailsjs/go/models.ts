@@ -1,13 +1,13 @@
 export namespace analysis {
-	
+
 	export class EnergyPoint {
 	    time_ms: number;
 	    value: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new EnergyPoint(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.time_ms = source["time_ms"];
@@ -19,11 +19,11 @@ export namespace analysis {
 	    end_ms: number;
 	    type: string;
 	    energy: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new Section(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.start_ms = source["start_ms"];
@@ -32,24 +32,22 @@ export namespace analysis {
 	        this.energy = source["energy"];
 	    }
 	}
-	export class SongAnalysis {
-	    duration_ms: number;
-	    bpm: number;
-	    beats: number[];
+	export class Stream {
+	    id: string;
+	    label: string;
 	    energy: EnergyPoint[];
-	    sections?: Section[];
-	
+	    accents: number[];
+
 	    static createFrom(source: any = {}) {
-	        return new SongAnalysis(source);
+	        return new Stream(source);
 	    }
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.duration_ms = source["duration_ms"];
-	        this.bpm = source["bpm"];
-	        this.beats = source["beats"];
+	        this.id = source["id"];
+	        this.label = source["label"];
 	        this.energy = this.convertValues(source["energy"], EnergyPoint);
-	        this.sections = this.convertValues(source["sections"], Section);
+	        this.accents = source["accents"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -69,6 +67,65 @@ export namespace analysis {
 		    }
 		    return a;
 		}
+	}
+	export class SongAnalysis {
+	    duration_ms: number;
+	    bpm: number;
+	    beats: number[];
+	    energy: EnergyPoint[];
+	    sections?: Section[];
+	    streams?: Stream[];
+	
+	    static createFrom(source: any = {}) {
+	        return new SongAnalysis(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.duration_ms = source["duration_ms"];
+	        this.bpm = source["bpm"];
+	        this.beats = source["beats"];
+	        this.energy = this.convertValues(source["energy"], EnergyPoint);
+	        this.sections = this.convertValues(source["sections"], Section);
+	        this.streams = this.convertValues(source["streams"], Stream);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
+export namespace generation {
+	
+	export class StreamAssignment {
+	    stream: string;
+	    device_ids: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new StreamAssignment(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.stream = source["stream"];
+	        this.device_ids = source["device_ids"];
+	    }
 	}
 
 }
@@ -214,6 +271,7 @@ export namespace main {
 	    song_path: string;
 	    song_name: string;
 	    style: string;
+	    generation: string;
 	    target: string;
 	    analysis: analysis.SongAnalysis;
 	    timeline: EditorTimeline;
@@ -232,6 +290,7 @@ export namespace main {
 	        this.song_path = source["song_path"];
 	        this.song_name = source["song_name"];
 	        this.style = source["style"];
+	        this.generation = source["generation"];
 	        this.target = source["target"];
 	        this.analysis = this.convertValues(source["analysis"], analysis.SongAnalysis);
 	        this.timeline = this.convertValues(source["timeline"], EditorTimeline);
@@ -330,4 +389,3 @@ export namespace main {
 	}
 
 }
-
