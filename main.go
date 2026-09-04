@@ -23,7 +23,7 @@ func main() {
 		Title:     "lifx-maestro " + version,
 		Width:     1440,
 		Height:    940,
-		MinWidth:  1180,
+		MinWidth:  1240,
 		MinHeight: 760,
 		AssetServer: &assetserver.Options{
 			Assets: assets,

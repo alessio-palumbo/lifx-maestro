@@ -37,6 +37,45 @@ func TestGenerateCreatesBeatEvents(t *testing.T) {
 	}
 }
 
+func TestGenerateDefaultModeMatchesExplicitSongWide(t *testing.T) {
+	song := testSong()
+	song.Streams = []analysis.Stream{
+		{ID: "low", Label: "Low / bass", Energy: song.Energy, Accents: []int64{125, 875}},
+		{ID: "full", Label: "Full mix / accents", Energy: song.Energy, Accents: []int64{375}},
+	}
+	options := Options{
+		Name:   "song",
+		Style:  "synthwave",
+		Target: "all",
+		Devices: []devices.DeviceInfo{
+			{ID: "desk", Capabilities: devices.DeviceCapabilities{Kind: devices.DeviceKindSingleZone, HasColor: true, HasKelvin: true}},
+			{ID: "strip", Capabilities: devices.DeviceCapabilities{Kind: devices.DeviceKindMultiZone, HasColor: true, HasKelvin: true, ZoneCount: 8}},
+		},
+	}
+
+	defaultTimeline, err := Generate(song, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options.Mode = GenerationModeSongWide
+	explicitTimeline, err := Generate(song, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defaultJSON, err := json.Marshal(defaultTimeline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	explicitJSON, err := json.Marshal(explicitTimeline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(defaultJSON) != string(explicitJSON) {
+		t.Fatal("default generation differs from explicit song-wide generation")
+	}
+}
+
 func TestGenerateRejectsUnknownStyle(t *testing.T) {
 	_, err := Generate(analysis.SongAnalysis{
 		DurationMS: 1000,

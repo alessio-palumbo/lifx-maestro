@@ -99,9 +99,9 @@ def streams(y, sr, full_energy, full_onset_env, beats):
     hop_length = 512
     frame_length = 2048
     bands = [
-        ("low", "Low / bass", 20, 250),
-        ("mid", "Mids / vocal", 250, 4000),
-        ("high", "Percussion / highs", 4000, min(12000, sr / 2)),
+        ("low", "Low (20-250 Hz)", 20, 250),
+        ("mid", "Mid (250-4,000 Hz)", 250, 4000),
+        ("high", "High (4,000-12,000 Hz)", 4000, min(12000, sr / 2)),
     ]
 
     result = []
@@ -120,7 +120,7 @@ def streams(y, sr, full_energy, full_onset_env, beats):
 
     result.append({
         "id": "full",
-        "label": "Full mix / accents",
+        "label": "Full spectrum / accents",
         "energy": full_energy,
         "accents": accents_from_onsets(full_onset_env, sr, hop_length, fallback_beats=beats, min_gap_ms=180),
     })

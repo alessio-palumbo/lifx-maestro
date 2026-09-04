@@ -279,6 +279,7 @@ function render() {
         ${renderTargets()}
         <main class="timeline-panel">
           ${renderOverview()}
+          ${renderLayerAssignments(state.session)}
           ${renderTimeline()}
           ${renderAnalysis()}
         </main>
@@ -315,24 +316,23 @@ function renderToolbar() {
         </div>
       </div>
       <div class="transport">
-        <button id="play-toggle" class="tool transport-button" ${state.previewStarting || !selectedSongPath() ? 'disabled' : ''}>${state.previewStarting ? 'Starting' : state.playing ? 'Pause' : 'Play'}</button>
-        <button id="stop" class="tool transport-button" ${state.previewStarting || !selectedSongPath() ? 'disabled' : ''}>Stop</button>
+        <button id="play-toggle" class="tool icon-action transport-button ${state.previewStarting ? 'pending' : ''}" title="${transportActionLabel()}" aria-label="${transportActionLabel()}" ${state.previewStarting || !selectedSongPath() ? 'disabled' : ''}>${transportIcon()}</button>
+        <button id="stop" class="tool icon-action transport-button" title="Stop" aria-label="Stop" ${state.previewStarting || !selectedSongPath() ? 'disabled' : ''}>${iconSVG('stop')}</button>
         <div class="timecode">${formatTime(state.playheadMS)} / ${formatTime(session ? playbackDurationMS(session) : 0)}</div>
       </div>
-      <div class="actions">
-        <label class="field">
-          <span>Brightness</span>
-          <span class="brightness-field">
-            <input id="master-brightness" class="brightness-slider" type="range" min="5" max="100" step="5" value="${state.masterBrightness}" />
-            <span class="brightness-value">${Math.round(state.masterBrightness)}%</span>
-          </span>
+      <div class="master-output">
+        <label class="brightness-control" title="Master brightness">
+          <span class="field-icon" aria-label="Master brightness">${iconSVG('sun')}</span>
+          <input id="master-brightness" class="brightness-slider" type="range" min="5" max="100" step="5" value="${state.masterBrightness}" aria-label="Master brightness" />
         </label>
+      </div>
+      <div class="actions">
         <label class="field">
           <span>Style</span>
           <select id="style" class="select-control">${styleOptions}</select>
         </label>
         <label class="field">
-          <span>Generation</span>
+          <span>Mode</span>
           <select id="generation-mode" class="select-control">${generationOptions}</select>
         </label>
         <button id="choose-song" class="tool primary" ${state.loading ? 'disabled' : ''}>Choose Song</button>
@@ -345,6 +345,33 @@ function renderToolbar() {
       </div>
     </header>
   `;
+}
+
+function transportActionLabel() {
+  if (state.previewStarting) {
+    return 'Starting';
+  }
+  if (state.playing) {
+    return 'Pause';
+  }
+  return state.previewPaused ? 'Resume' : 'Play';
+}
+
+function transportIcon() {
+  if (state.previewStarting) {
+    return '<span class="button-spinner" aria-hidden="true"></span>';
+  }
+  return iconSVG(state.playing ? 'pause' : 'play');
+}
+
+function iconSVG(name: 'play' | 'pause' | 'stop' | 'sun') {
+  const content = {
+    play: '<polygon points="6 3 20 12 6 21 6 3"></polygon>',
+    pause: '<rect x="6" y="4" width="4" height="16" rx="1"></rect><rect x="14" y="4" width="4" height="16" rx="1"></rect>',
+    stop: '<rect x="4" y="4" width="16" height="16" rx="2"></rect>',
+    sun: '<circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"></path>',
+  }[name];
+  return `<svg class="toolbar-icon" viewBox="0 0 24 24" aria-hidden="true">${content}</svg>`;
 }
 
 function renderError() {
@@ -512,7 +539,6 @@ function renderTargets() {
       </button>
       ${renderTokenGroup('Groups', groups, 'group')}
       ${renderTokenGroup('Locations', locations, 'location')}
-      ${renderLayerAssignments(session)}
       <div class="token-title device-title">Devices</div>
       ${deviceItems}
     </aside>
@@ -529,18 +555,40 @@ function renderLayerAssignments(session: EditorSession | null) {
   }
   ensureLayerAssignments();
   return `
-    <div class="layer-panel">
-      <div class="token-title">Musical Layers</div>
-      ${selected.map((device) => `
-        <label class="layer-row">
-          <span>${escapeHTML(device.label || device.id)}</span>
-          <select class="layer-select" data-layer-device="${escapeAttr(device.id)}">
-            ${streamOptions(state.layerAssignments[device.id] || defaultStreamForDevice(device))}
-          </select>
-        </label>
-      `).join('')}
-    </div>
+    <section class="layer-panel">
+      <div class="layer-panel-title">Layer assignments</div>
+      <div class="layer-list">
+        ${STREAMS.map((stream) => `
+          <div class="layer-assignment" data-layer-assignment="${stream.id}">
+            <span class="layer-name">${escapeHTML(stream.label)}</span>
+            <details class="layer-picker">
+              <summary><span class="layer-count">${layerAssignmentCount(stream.id, selected)}</span></summary>
+              <div class="layer-picker-menu">
+                ${selected.map((device) => `
+                  <label class="layer-device-option">
+                    <input
+                      class="layer-device-radio"
+                      type="radio"
+                      name="layer-device-${escapeAttr(device.id)}"
+                      value="${stream.id}"
+                      data-layer-device="${escapeAttr(device.id)}"
+                      ${state.layerAssignments[device.id] === stream.id ? 'checked' : ''}
+                    />
+                    <span>${escapeHTML(device.label || device.id)}</span>
+                  </label>
+                `).join('')}
+              </div>
+            </details>
+          </div>
+        `).join('')}
+      </div>
+    </section>
   `;
+}
+
+function layerAssignmentCount(streamID: string, devices: DeviceInfo[]) {
+  const count = devices.filter((device) => state.layerAssignments[device.id] === streamID).length;
+  return `${count} ${count === 1 ? 'light' : 'lights'}`;
 }
 
 function renderOverview() {
@@ -548,7 +596,7 @@ function renderOverview() {
   if (!session) {
     return `<section class="overview empty">No timeline loaded</section>`;
   }
-  const visibleEvents = timelineForSelectedTargets(session).events.length;
+  const visibleEvents = visibleTimelineEventCount(session);
   return `
     <section class="overview">
       <div>
@@ -672,11 +720,19 @@ function renderAnalysis() {
     return '';
   }
   const duration = Math.max(session.timeline.duration_ms, 1);
-  const energyPath = session.analysis.energy.map((point, index) => {
-    const x = percent(point.time_ms, duration);
-    const y = 100 - point.value * 100;
-    return `${index === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`;
-  }).join(' ');
+  const streams = session.analysis.streams?.length
+    ? session.analysis.streams
+    : [{ id: 'full', label: streamLabel('full'), energy: session.analysis.energy, accents: [] }];
+  const energyPaths = streams.map((stream) => `
+    <path class="energy-trace stream-${energyStreamClass(stream.id)}" d="${energyPath(stream.energy, duration)}" />
+  `).join('');
+  const energyLegend = STREAMS
+    .filter((stream) => streams.some((available) => available.id === stream.id))
+    .map((stream) => `
+      <span class="energy-legend-item stream-${energyStreamClass(stream.id)}">
+        <span class="energy-legend-swatch"></span>${escapeHTML(stream.label)}
+      </span>
+    `).join('');
   const sections = (session.analysis.sections ?? []).map((section) => `
     <div class="section-row">
       <strong>${escapeHTML(section.type)}</strong>
@@ -689,9 +745,16 @@ function renderAnalysis() {
     <section class="analysis">
       <div class="energy">
         <div class="panel-title">Energy</div>
-        <svg viewBox="0 0 100 100" preserveAspectRatio="none">
-          <path d="${energyPath}" />
-        </svg>
+        <div class="energy-chart">
+          <div class="energy-axis"><span>100%</span><span>50%</span><span>0%</span></div>
+          <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+            <line class="energy-grid" x1="0" y1="0" x2="100" y2="0" />
+            <line class="energy-grid" x1="0" y1="50" x2="100" y2="50" />
+            <line class="energy-grid" x1="0" y1="100" x2="100" y2="100" />
+            ${energyPaths}
+          </svg>
+        </div>
+        <div class="energy-legend">${energyLegend}</div>
       </div>
       <div class="sections-list">
         <div class="panel-title">Sections</div>
@@ -699,6 +762,18 @@ function renderAnalysis() {
       </div>
     </section>
   `;
+}
+
+function energyPath(points: EnergyPoint[], duration: number) {
+  return points.map((point, index) => {
+    const x = percent(point.time_ms, duration);
+    const y = 100 - point.value * 100;
+    return `${index === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`;
+  }).join(' ');
+}
+
+function energyStreamClass(streamID: string) {
+  return ['low', 'mid', 'high', 'full'].includes(streamID) ? streamID : 'full';
 }
 
 function renderInspector() {
@@ -845,10 +920,6 @@ function bindEvents() {
   document.querySelector('#master-brightness')?.addEventListener('input', (event) => {
     const percent = Number((event.target as HTMLInputElement).value);
     state.masterBrightness = percent;
-    const readout = document.querySelector<HTMLElement>('.brightness-value');
-    if (readout) {
-      readout.textContent = `${Math.round(percent)}%`;
-    }
     void SetMasterBrightness(percent);
   });
   document.querySelector('#tour-next')?.addEventListener('click', advanceTour);
@@ -878,20 +949,44 @@ function bindEvents() {
       render();
     });
   });
-  document.querySelectorAll<HTMLSelectElement>('.layer-select[data-layer-device]').forEach((select) => {
-    select.addEventListener('change', () => {
-      const deviceID = select.dataset.layerDevice ?? '';
-      if (!deviceID) {
+  document.querySelectorAll<HTMLInputElement>('.layer-device-radio[data-layer-device]').forEach((radio) => {
+    radio.addEventListener('change', () => {
+      const deviceID = radio.dataset.layerDevice ?? '';
+      if (!deviceID || !radio.checked) {
         return;
       }
-      state.layerAssignments[deviceID] = select.value;
+      state.layerAssignments[deviceID] = radio.value;
       handleAssignmentsChanged();
-      render();
+      updateRegenerationControl();
+      updateLayerAssignmentCounts();
+    });
+  });
+  const layerPickers = Array.from(document.querySelectorAll<HTMLDetailsElement>('.layer-picker'));
+  layerPickers.forEach((picker) => {
+    picker.addEventListener('toggle', () => {
+      if (!picker.open) {
+        return;
+      }
+      layerPickers.forEach((other) => {
+        if (other !== picker) {
+          other.open = false;
+        }
+      });
+    });
+  });
+  document.querySelector<HTMLElement>('.shell')?.addEventListener('pointerdown', (event) => {
+    if ((event.target as HTMLElement).closest('.layer-picker')) {
+      return;
+    }
+    layerPickers.forEach((picker) => {
+      picker.open = false;
     });
   });
 
-  document.querySelectorAll<HTMLButtonElement>('.event').forEach((button) => {
-    button.addEventListener('click', () => {
+  const timeline = document.querySelector<HTMLElement>('.timeline');
+  timeline?.addEventListener('click', (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>('.event');
+    if (button) {
       const index = Number(button.dataset.event ?? -1);
       if (state.selectedEvent === index) {
         state.selectedEvent = -1;
@@ -901,31 +996,39 @@ function bindEvents() {
         state.inspectorOpen = true;
       }
       render();
-    });
-    button.addEventListener('dragstart', (event) => {
-      event.dataTransfer?.setData('text/plain', button.dataset.event ?? '-1');
-    });
+    }
   });
-
-  document.querySelectorAll<HTMLElement>('.lane-events').forEach((lane) => {
-    lane.addEventListener('dragover', (event) => event.preventDefault());
-    lane.addEventListener('drop', (event) => {
+  timeline?.addEventListener('dragstart', (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>('.event');
+    if (button) {
+      event.dataTransfer?.setData('text/plain', button.dataset.event ?? '-1');
+    }
+  });
+  timeline?.addEventListener('dragover', (event) => {
+    if ((event.target as HTMLElement).closest('.lane-events')) {
       event.preventDefault();
-      const index = Number(event.dataTransfer?.getData('text/plain') ?? -1);
-      const session = state.session;
-      if (!session || index < 0) {
-        return;
-      }
-      const rect = lane.getBoundingClientRect();
-      const x = clamp(event.clientX - rect.left, 0, rect.width);
-      const movedEvent = session.timeline.events[index];
-      movedEvent.time_ms = Math.round(x / state.zoomPxPerSecond * 1000);
-      state.inspectorOpen = true;
-      state.status = `Moved event to ${formatTime(movedEvent.time_ms)}`;
-      sortTimeline(session.timeline);
-      state.selectedEvent = session.timeline.events.indexOf(movedEvent);
-      render();
-    });
+    }
+  });
+  timeline?.addEventListener('drop', (event) => {
+    const lane = (event.target as HTMLElement).closest<HTMLElement>('.lane-events');
+    if (!lane) {
+      return;
+    }
+    event.preventDefault();
+    const index = Number(event.dataTransfer?.getData('text/plain') ?? -1);
+    const session = state.session;
+    if (!session || index < 0) {
+      return;
+    }
+    const rect = lane.getBoundingClientRect();
+    const x = clamp(event.clientX - rect.left, 0, rect.width);
+    const movedEvent = session.timeline.events[index];
+    movedEvent.time_ms = Math.round(x / state.zoomPxPerSecond * 1000);
+    state.inspectorOpen = true;
+    state.status = `Moved event to ${formatTime(movedEvent.time_ms)}`;
+    sortTimeline(session.timeline);
+    state.selectedEvent = session.timeline.events.indexOf(movedEvent);
+    render();
   });
 
   bindInspector();
@@ -1252,7 +1355,11 @@ function startPlaybackTimer(session: EditorSession) {
 function updateTransport() {
   const playButton = document.querySelector<HTMLButtonElement>('#play-toggle');
   if (playButton) {
-    playButton.textContent = state.previewStarting ? 'Starting' : state.playing ? 'Pause' : 'Play';
+    const label = transportActionLabel();
+    playButton.innerHTML = transportIcon();
+    playButton.title = label;
+    playButton.setAttribute('aria-label', label);
+    playButton.classList.toggle('pending', state.previewStarting);
   }
   const timecode = document.querySelector<HTMLElement>('.timecode');
   if (timecode) {
@@ -1467,10 +1574,26 @@ function timelineForSelectedTargets(session: EditorSession): Timeline {
 }
 
 function visibleTimelineDurationMS(session: EditorSession) {
-  const timeline = timelineForSelectedTargets(session);
-  return timeline.events.reduce((maxEnd, event) => {
+  const devices = selectedTargetDevices(session);
+  if (devices.length === 0) {
+    return session.timeline.duration_ms;
+  }
+  return session.timeline.events.reduce((maxEnd, event) => {
+    if (!eventAppliesToAnyDevice(event, devices)) {
+      return maxEnd;
+    }
     return Math.max(maxEnd, event.time_ms + eventDurationMS(event));
   }, session.timeline.duration_ms);
+}
+
+function visibleTimelineEventCount(session: EditorSession) {
+  const devices = selectedTargetDevices(session);
+  if (devices.length === 0) {
+    return 0;
+  }
+  return session.timeline.events.reduce((count, event) => (
+    count + (eventAppliesToAnyDevice(event, devices) ? 1 : 0)
+  ), 0);
 }
 
 function generatedTimelineCoversSelectedTargets(session: EditorSession) {
@@ -1566,10 +1689,10 @@ function splitTarget(value: string) {
 }
 
 const STREAMS: AnalysisStream[] = [
-  { id: 'low', label: 'Low / bass', energy: [], accents: [] },
-  { id: 'high', label: 'Percussion / highs', energy: [], accents: [] },
-  { id: 'mid', label: 'Mids / vocal', energy: [], accents: [] },
-  { id: 'full', label: 'Full mix / accents', energy: [], accents: [] },
+  { id: 'low', label: 'Low (20-250 Hz)', energy: [], accents: [] },
+  { id: 'mid', label: 'Mid (250-4,000 Hz)', energy: [], accents: [] },
+  { id: 'high', label: 'High (4,000-12,000 Hz)', energy: [], accents: [] },
+  { id: 'full', label: 'Full spectrum / accents', energy: [], accents: [] },
 ];
 
 function generationLabel(mode: string) {
@@ -1585,10 +1708,6 @@ function generationLabel(mode: string) {
 
 function streamLabel(streamID: string) {
   return STREAMS.find((stream) => stream.id === streamID)?.label ?? streamID;
-}
-
-function streamOptions(selected: string) {
-  return STREAMS.map((stream) => `<option value="${stream.id}" ${stream.id === selected ? 'selected' : ''}>${stream.label}</option>`).join('');
 }
 
 function defaultStreamForDevice(device: DeviceInfo) {
@@ -1774,6 +1893,29 @@ function clearRegenerationReasons() {
 
 function updateNeedsRegeneration() {
   state.needsRegeneration = Object.values(state.regenerationReasons).some(Boolean);
+}
+
+function updateRegenerationControl() {
+  const button = document.querySelector<HTMLButtonElement>('#regenerate');
+  if (!button) {
+    return;
+  }
+  button.classList.toggle('attention', state.needsRegeneration);
+  button.textContent = state.needsRegeneration && !state.regenerationReasons.song ? 'Regenerate' : 'Generate';
+}
+
+function updateLayerAssignmentCounts() {
+  const session = state.session;
+  if (!session) {
+    return;
+  }
+  const devices = selectedTargetDevices(session);
+  document.querySelectorAll<HTMLElement>('[data-layer-assignment]').forEach((assignment) => {
+    const count = assignment.querySelector<HTMLElement>('.layer-count');
+    if (count) {
+      count.textContent = layerAssignmentCount(assignment.dataset.layerAssignment ?? '', devices);
+    }
+  });
 }
 
 function regenerationMessage() {

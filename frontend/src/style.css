@@ -8,11 +8,33 @@
 
 * {
   box-sizing: border-box;
+  scrollbar-color: #465163 #15191f;
+  scrollbar-width: thin;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner {
+  background: #15191f;
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 2px solid #15191f;
+  border-radius: 6px;
+  background: #465163;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #5a687b;
 }
 
 body {
   margin: 0;
-  min-width: 1180px;
+  min-width: 1240px;
   min-height: 760px;
   overflow: hidden;
 }
@@ -41,10 +63,10 @@ button {
 }
 
 .toolbar {
-  display: grid;
-  grid-template-columns: 210px 310px 1fr;
-  gap: 18px;
+  display: flex;
+  gap: 14px;
   align-items: center;
+  min-width: 1240px;
   min-height: 76px;
   padding: 14px 18px;
   border-bottom: 1px solid #2a3039;
@@ -53,6 +75,7 @@ button {
 
 .brand {
   display: flex;
+  flex: 0 0 155px;
   align-items: center;
   gap: 12px;
   min-width: 0;
@@ -79,11 +102,22 @@ button {
 }
 
 .transport {
+  flex: 0 0 276px;
   min-width: 0;
 }
 
 .actions {
+  flex: 0 0 auto;
   justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.master-output {
+  display: flex;
+  flex: 1 1 auto;
+  justify-content: center;
+  min-width: 138px;
 }
 
 .tool {
@@ -93,6 +127,7 @@ button {
   border-radius: 7px;
   color: #edf1f7;
   background: #222832;
+  white-space: nowrap;
 }
 
 .tool:hover {
@@ -123,13 +158,14 @@ button {
 }
 
 .transport-button {
-  width: 78px;
+  display: inline-grid;
+  place-items: center;
+  width: 38px;
   padding: 0;
-  text-align: center;
 }
 
 .timecode {
-  width: 218px;
+  width: 180px;
   padding: 7px 10px;
   border: 1px solid #303743;
   border-radius: 7px;
@@ -147,6 +183,44 @@ button {
   gap: 8px;
   color: #9aa5b5;
   font-size: 12px;
+}
+
+.field-icon {
+  display: inline-grid;
+  place-items: center;
+  color: #9aa5b5;
+}
+
+.actions #style {
+  width: 105px;
+}
+
+.actions #generation-mode {
+  width: 130px;
+}
+
+.toolbar-icon {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.transport-button .toolbar-icon {
+  width: 17px;
+  height: 17px;
+}
+
+.button-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(237, 241, 247, 0.28);
+  border-top-color: #edf1f7;
+  border-radius: 50%;
+  animation: spin 0.75s linear infinite;
 }
 
 .field select,
@@ -324,32 +398,117 @@ button {
 
 .layer-panel {
   display: grid;
-  gap: 8px;
-  margin: 14px 0;
-  padding-top: 12px;
-  border-top: 1px solid #2a3039;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  padding: 10px 22px;
+  border-bottom: 1px solid #2a3039;
+  background: #14181e;
 }
 
-.layer-row {
+.layer-panel-title {
+  color: #9aa5b5;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.layer-list {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.layer-assignment {
+  position: relative;
   display: grid;
   gap: 5px;
+  min-width: 0;
 }
 
-.layer-row span {
+.layer-name {
   overflow: hidden;
-  color: #c4cfdd;
-  font-size: 12px;
+  color: #8d98a8;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.layer-select {
-  width: 100%;
-  min-height: 30px;
+.layer-picker summary {
+  min-height: 32px;
+  padding: 7px 28px 7px 10px;
   border: 1px solid #303743;
   border-radius: 7px;
   color: #edf1f7;
   background: #1b2028;
+  cursor: pointer;
+  list-style: none;
+  position: relative;
+}
+
+.layer-picker summary::-webkit-details-marker {
+  display: none;
+}
+
+.layer-picker summary::after {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  width: 6px;
+  height: 6px;
+  border-right: 1px solid #9aa5b5;
+  border-bottom: 1px solid #9aa5b5;
+  content: '';
+  transform: translateY(-65%) rotate(45deg);
+}
+
+.layer-picker[open] summary {
+  border-color: #37a9ca;
+}
+
+.layer-picker-menu {
+  position: absolute;
+  top: calc(100% + 5px);
+  left: 0;
+  z-index: 20;
+  display: grid;
+  width: max(100%, 220px);
+  max-height: 260px;
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid #384150;
+  border-radius: 7px;
+  background: #1b2028;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.42);
+}
+
+.layer-device-option {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-height: 32px;
+  padding: 5px 7px;
+  border-radius: 5px;
+  color: #c4cfdd;
+  cursor: pointer;
+}
+
+.layer-device-option:hover {
+  background: #252c36;
+}
+
+.layer-device-option input {
+  margin: 0;
+  accent-color: #35d2ff;
+}
+
+.layer-device-option span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .target-token {
@@ -504,22 +663,20 @@ button {
 
 /* Master output level. Applied during playback, so it is a live fader rather than
    a generation setting, and moving it never marks the timeline stale. */
-.brightness-field {
-  display: flex;
-  align-items: center;
+.brightness-control {
+  display: grid;
+  grid-template-columns: 18px minmax(112px, 220px);
   gap: 8px;
+  align-items: center;
+  width: min(246px, 100%);
 }
 
 .brightness-slider {
-  width: 96px;
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 0;
   accent-color: #35d2ff;
-}
-
-.brightness-value {
-  min-width: 34px;
-  color: #9aa5b5;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
 }
 
 /* The walkthrough deliberately does not dim or block the app: it points at real
@@ -854,16 +1011,83 @@ button {
   background: #171c23;
 }
 
-.energy svg {
-  width: 100%;
-  height: 132px;
+.energy-chart {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 8px;
+  height: 122px;
 }
 
-.energy path {
-  fill: none;
-  stroke: #35d2ff;
-  stroke-width: 2.5;
+.energy-axis {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 0 0 1px;
+  color: #6f7b8d;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.energy svg {
+  width: 100%;
+  height: 122px;
+  overflow: visible;
+}
+
+.energy .energy-grid {
+  stroke: #2a3039;
+  stroke-width: 1;
   vector-effect: non-scaling-stroke;
+}
+
+.energy .energy-trace {
+  fill: none;
+  stroke-width: 1.8;
+  opacity: 0.88;
+  vector-effect: non-scaling-stroke;
+}
+
+.energy .stream-low {
+  color: #e36f9f;
+  stroke: #e36f9f;
+}
+
+.energy .stream-mid {
+  color: #79c98b;
+  stroke: #79c98b;
+}
+
+.energy .stream-high {
+  color: #e6c75a;
+  stroke: #e6c75a;
+}
+
+.energy .stream-full {
+  color: #45bfe3;
+  stroke: #45bfe3;
+}
+
+.energy-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 14px;
+  margin: 10px 0 0 38px;
+  color: #8d98a8;
+  font-size: 10px;
+}
+
+.energy-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.energy-legend-swatch {
+  width: 12px;
+  height: 2px;
+  background: currentColor;
 }
 
 .section-row {
