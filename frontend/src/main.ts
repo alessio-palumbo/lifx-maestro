@@ -168,6 +168,8 @@ type AppState = {
   generatedStyle: string;
   generatedGenerationMode: string;
   zoomPxPerSecond: number;
+  energyZoom: number;
+  energyScrollLeft: number;
   inspectorOpen: boolean;
   inspectorWidth: number;
   sidebarOpen: boolean;
@@ -208,6 +210,8 @@ const state: AppState = {
   generatedStyle: '',
   generatedGenerationMode: 'song_wide',
   zoomPxPerSecond: 16,
+  energyZoom: 1,
+  energyScrollLeft: 0,
   inspectorOpen: false,
   inspectorWidth: 306,
   sidebarOpen: true,
@@ -272,6 +276,7 @@ function reportFailure(error: unknown) {
 
 function render() {
   captureTimelineScroll();
+  captureEnergyScroll();
   app.innerHTML = `
     <div class="shell" style="--inspector-width:${state.inspectorOpen ? state.inspectorWidth : 0}px;">
       ${renderToolbar()}
@@ -292,6 +297,7 @@ function render() {
   `;
   bindEvents();
   restoreTimelineScroll();
+  restoreEnergyScroll();
   // Anchor positions come from the DOM that was just built, so they can never go
   // stale against a re-render.
   positionTour();
@@ -733,6 +739,7 @@ function renderAnalysis() {
         <span class="energy-legend-swatch"></span>${escapeHTML(stream.label)}
       </span>
     `).join('');
+  const energyTicks = renderEnergyTicks(duration);
   const sections = (session.analysis.sections ?? []).map((section) => `
     <div class="section-row">
       <strong>${escapeHTML(section.type)}</strong>
@@ -744,15 +751,28 @@ function renderAnalysis() {
   return `
     <section class="analysis">
       <div class="energy">
-        <div class="panel-title">Energy</div>
+        <div class="energy-head">
+          <div class="panel-title">Energy</div>
+          <div class="energy-zoom-control">
+            <button id="energy-zoom-out" class="icon-tool" title="Zoom energy out" aria-label="Zoom energy out">-</button>
+            <input id="energy-zoom" type="range" min="1" max="8" step="1" value="${state.energyZoom}" aria-label="Energy graph zoom" />
+            <button id="energy-zoom-in" class="icon-tool" title="Zoom energy in" aria-label="Zoom energy in">+</button>
+            <span id="energy-zoom-value">${state.energyZoom}x</span>
+          </div>
+        </div>
         <div class="energy-chart">
           <div class="energy-axis"><span>100%</span><span>50%</span><span>0%</span></div>
-          <svg viewBox="0 0 100 100" preserveAspectRatio="none">
-            <line class="energy-grid" x1="0" y1="0" x2="100" y2="0" />
-            <line class="energy-grid" x1="0" y1="50" x2="100" y2="50" />
-            <line class="energy-grid" x1="0" y1="100" x2="100" y2="100" />
-            ${energyPaths}
-          </svg>
+          <div class="energy-scroll">
+            <div class="energy-canvas" style="width:${state.energyZoom * 100}%">
+              <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+                <line class="energy-grid" x1="0" y1="0" x2="100" y2="0" />
+                <line class="energy-grid" x1="0" y1="50" x2="100" y2="50" />
+                <line class="energy-grid" x1="0" y1="100" x2="100" y2="100" />
+                ${energyPaths}
+              </svg>
+              <div class="energy-time-axis">${energyTicks}</div>
+            </div>
+          </div>
         </div>
         <div class="energy-legend">${energyLegend}</div>
       </div>
@@ -774,6 +794,15 @@ function energyPath(points: EnergyPoint[], duration: number) {
 
 function energyStreamClass(streamID: string) {
   return ['low', 'mid', 'high', 'full'].includes(streamID) ? streamID : 'full';
+}
+
+function renderEnergyTicks(duration: number) {
+  const segments = Math.max(4, Math.round(state.energyZoom * 4));
+  return Array.from({ length: segments + 1 }, (_, index) => {
+    const ratio = index / segments;
+    const timeMS = duration * ratio;
+    return `<span style="left:${(ratio * 100).toFixed(3)}%">${formatAxisTime(timeMS)}</span>`;
+  }).join('');
 }
 
 function renderInspector() {
@@ -908,6 +937,11 @@ function bindEvents() {
   document.querySelector('#zoom-in')?.addEventListener('click', () => setZoom(state.zoomPxPerSecond + 4));
   document.querySelector('#timeline-zoom')?.addEventListener('input', (event) => {
     setZoom(Number((event.target as HTMLInputElement).value));
+  });
+  document.querySelector('#energy-zoom-out')?.addEventListener('click', () => setEnergyZoom(state.energyZoom - 1));
+  document.querySelector('#energy-zoom-in')?.addEventListener('click', () => setEnergyZoom(state.energyZoom + 1));
+  document.querySelector('#energy-zoom')?.addEventListener('change', (event) => {
+    setEnergyZoom(Number((event.target as HTMLInputElement).value));
   });
   document.querySelector('#toggle-inspector')?.addEventListener('click', () => {
     state.inspectorOpen = !state.inspectorOpen;
@@ -1633,6 +1667,34 @@ function setZoom(value: number) {
   render();
 }
 
+function setEnergyZoom(value: number) {
+  const scroll = document.querySelector<HTMLElement>('.energy-scroll');
+  const centerRatio = scroll && scroll.scrollWidth > 0
+    ? (scroll.scrollLeft + scroll.clientWidth / 2) / scroll.scrollWidth
+    : 0.5;
+  state.energyZoom = clamp(Math.round(value), 1, 8);
+  const canvas = document.querySelector<HTMLElement>('.energy-canvas');
+  const input = document.querySelector<HTMLInputElement>('#energy-zoom');
+  const readout = document.querySelector<HTMLElement>('#energy-zoom-value');
+  const axis = document.querySelector<HTMLElement>('.energy-time-axis');
+  if (canvas) {
+    canvas.style.width = `${state.energyZoom * 100}%`;
+  }
+  if (input) {
+    input.value = String(state.energyZoom);
+  }
+  if (readout) {
+    readout.textContent = `${state.energyZoom}x`;
+  }
+  if (axis && state.session) {
+    axis.innerHTML = renderEnergyTicks(Math.max(state.session.timeline.duration_ms, 1));
+  }
+  if (scroll) {
+    scroll.scrollLeft = Math.max(0, centerRatio * scroll.scrollWidth - scroll.clientWidth / 2);
+    state.energyScrollLeft = scroll.scrollLeft;
+  }
+}
+
 function timelineWidthPx(durationMS: number) {
   return Math.max(900, Math.ceil(durationMS / 1000 * state.zoomPxPerSecond));
 }
@@ -1656,6 +1718,24 @@ function restoreTimelineScroll() {
   scroll.addEventListener('scroll', () => {
     state.timelineScrollLeft = scroll.scrollLeft;
     state.timelineScrollTop = scroll.scrollTop;
+  }, { passive: true });
+}
+
+function captureEnergyScroll() {
+  const scroll = document.querySelector<HTMLElement>('.energy-scroll');
+  if (scroll) {
+    state.energyScrollLeft = scroll.scrollLeft;
+  }
+}
+
+function restoreEnergyScroll() {
+  const scroll = document.querySelector<HTMLElement>('.energy-scroll');
+  if (!scroll) {
+    return;
+  }
+  scroll.scrollLeft = state.energyScrollLeft;
+  scroll.addEventListener('scroll', () => {
+    state.energyScrollLeft = scroll.scrollLeft;
   }, { passive: true });
 }
 
@@ -1700,7 +1780,7 @@ function generationLabel(mode: string) {
     case 'musical_layers':
       return 'Musical layers';
     case 'song_wide':
-      return 'Song-wide';
+      return 'Full mix';
     default:
       return mode.replace(/_/g, ' ');
   }
@@ -2306,6 +2386,17 @@ function formatTime(ms: number) {
   const seconds = total % 60;
   const millis = Math.floor(ms % 1000);
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(millis).padStart(3, '0')}`;
+}
+
+function formatAxisTime(ms: number) {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
 function formatNumber(value: number, digits: number) {
