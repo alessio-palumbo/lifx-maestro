@@ -685,9 +685,32 @@ button {
 .summary-grid {
   display: grid;
   flex: 0 0 auto;
-  grid-template-columns: repeat(5, minmax(82px, 1fr));
+  grid-template-columns: 82px 108px repeat(3, 82px);
   gap: 8px;
-  min-width: 470px;
+  min-width: 468px;
+}
+
+.summary-select {
+  width: 100%;
+  height: 25px;
+  margin-top: 1px;
+  padding: 0 20px 0 0;
+  overflow: hidden;
+  border: 0;
+  color: #edf1f7;
+  background:
+    linear-gradient(45deg, transparent 50%, #8d98a8 50%) calc(100% - 9px) 10px / 5px 5px no-repeat,
+    linear-gradient(135deg, #8d98a8 50%, transparent 50%) calc(100% - 4px) 10px / 5px 5px no-repeat,
+    transparent;
+  font-size: 14px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  appearance: none;
+}
+
+.summary-select:focus {
+  outline: 1px solid #37a9ca;
+  outline-offset: 2px;
 }
 
 /* Failures need somewhere that outlives the work that produced them. The busy

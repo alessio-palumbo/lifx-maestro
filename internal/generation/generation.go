@@ -18,6 +18,7 @@ type Config struct {
 	BrightnessScale          float64            `json:"brightness_scale"`
 	TransitionAggressiveness float64            `json:"transition_aggressiveness"`
 	Mode                     GenerationMode     `json:"mode,omitempty"`
+	Dynamics                 DynamicsOverride   `json:"dynamics,omitempty"`
 	Assignments              []StreamAssignment `json:"assignments,omitempty"`
 }
 
@@ -26,6 +27,15 @@ type GenerationMode string
 const (
 	GenerationModeSongWide      GenerationMode = "song_wide"
 	GenerationModeMusicalLayers GenerationMode = "musical_layers"
+)
+
+type DynamicsOverride string
+
+const (
+	DynamicsAuto      DynamicsOverride = "auto"
+	DynamicsCalm      DynamicsOverride = "calm"
+	DynamicsBalanced  DynamicsOverride = "balanced"
+	DynamicsEnergetic DynamicsOverride = "energetic"
 )
 
 type StreamAssignment struct {
@@ -38,6 +48,7 @@ type Options struct {
 	Target      string
 	Style       string
 	Mode        GenerationMode
+	Dynamics    DynamicsOverride
 	Assignments []StreamAssignment
 	Config      Config
 	Devices     []devices.DeviceInfo
@@ -63,6 +74,11 @@ func Generate(song analysis.SongAnalysis, options Options) (*timeline.Timeline, 
 	if err := ValidateMode(generationMode(options)); err != nil {
 		return nil, err
 	}
+	dynamicsOverride := generationDynamics(options)
+	if err := ValidateDynamics(dynamicsOverride); err != nil {
+		return nil, err
+	}
+	dynamics := dynamicsFor(song.Dynamics, dynamicsOverride)
 
 	targets := targetsFor(options.Target, options.Devices)
 	songSections := sections.FromAnalysis(song)
@@ -76,18 +92,18 @@ func Generate(song analysis.SongAnalysis, options Options) (*timeline.Timeline, 
 	}
 
 	if generationMode(options) == GenerationModeMusicalLayers {
-		tl.Events = append(tl.Events, layeredEvents(song, style, targets, songSections, generationAssignments(options))...)
+		tl.Events = append(tl.Events, layeredEvents(song, style, targets, songSections, generationAssignments(options), dynamics)...)
 	} else {
 		for i, section := range songSections {
 			if i > 0 {
-				tl.Events = append(tl.Events, transitionEvents(song, section, style, targets, i)...)
+				tl.Events = append(tl.Events, transitionEvents(song, section, style, targets, i, dynamics)...)
 			}
-			tl.Events = append(tl.Events, sectionEvents(song, section, style, targets, i)...)
+			tl.Events = append(tl.Events, sectionEvents(song, section, style, targets, i, dynamics)...)
 		}
 	}
 
 	if len(tl.Events) == 1 {
-		tl.Events = append(tl.Events, fallbackEvents(song, style, targets)...)
+		tl.Events = append(tl.Events, fallbackEvents(song, style, targets, dynamics)...)
 	}
 
 	tl.SortEvents()
@@ -95,14 +111,14 @@ func Generate(song analysis.SongAnalysis, options Options) (*timeline.Timeline, 
 	return tl, nil
 }
 
-func layeredEvents(song analysis.SongAnalysis, style styles.Style, targets []effects.Target, songSections []sections.Section, assignments []StreamAssignment) []timeline.Event {
+func layeredEvents(song analysis.SongAnalysis, style styles.Style, targets []effects.Target, songSections []sections.Section, assignments []StreamAssignment, dynamics dynamicsPolicy) []timeline.Event {
 	if len(song.Streams) == 0 {
 		var events []timeline.Event
 		for i, section := range songSections {
 			if i > 0 {
-				events = append(events, transitionEvents(song, section, style, targets, i)...)
+				events = append(events, transitionEvents(song, section, style, targets, i, dynamics)...)
 			}
-			events = append(events, sectionEvents(song, section, style, targets, i)...)
+			events = append(events, sectionEvents(song, section, style, targets, i, dynamics)...)
 		}
 		return events
 	}
@@ -111,17 +127,16 @@ func layeredEvents(song analysis.SongAnalysis, style styles.Style, targets []eff
 	var events []timeline.Event
 	for i, section := range songSections {
 		if i > 0 {
-			events = append(events, transitionEvents(song, section, style, targetGroup(streamTargets, "full", targets), i)...)
+			events = append(events, transitionEvents(song, section, style, targetGroup(streamTargets, "full", targets), i, dynamics)...)
 		}
-		events = append(events, streamSectionEvents(song, section, style, streamTargets, i)...)
+		events = append(events, streamSectionEvents(song, section, style, streamTargets, i, dynamics)...)
 	}
 	return events
 }
 
-func streamSectionEvents(song analysis.SongAnalysis, section sections.Section, style styles.Style, streamTargets map[string][]effects.Target, sectionIndex int) []timeline.Event {
+func streamSectionEvents(song analysis.SongAnalysis, section sections.Section, style styles.Style, streamTargets map[string][]effects.Target, sectionIndex int, dynamics dynamicsPolicy) []timeline.Event {
 	var events []timeline.Event
 	streams := streamsByID(song.Streams)
-	dynamics := dynamicsFor(song.Dynamics)
 	for _, spec := range []struct {
 		id       string
 		section  sections.Type
@@ -190,8 +205,7 @@ func streamSectionEvents(song analysis.SongAnalysis, section sections.Section, s
 	return events
 }
 
-func sectionEvents(song analysis.SongAnalysis, section sections.Section, style styles.Style, targets []effects.Target, sectionIndex int) []timeline.Event {
-	dynamics := dynamicsFor(song.Dynamics)
+func sectionEvents(song analysis.SongAnalysis, section sections.Section, style styles.Style, targets []effects.Target, sectionIndex int, dynamics dynamicsPolicy) []timeline.Event {
 	ctx := effects.Context{
 		Section:     section,
 		Beats:       song.Beats,
@@ -239,17 +253,16 @@ func sectionEvents(song analysis.SongAnalysis, section sections.Section, style s
 	}
 }
 
-func fallbackEvents(song analysis.SongAnalysis, style styles.Style, targets []effects.Target) []timeline.Event {
+func fallbackEvents(song analysis.SongAnalysis, style styles.Style, targets []effects.Target, dynamics dynamicsPolicy) []timeline.Event {
 	section := sections.Section{StartMS: 0, EndMS: song.DurationMS, Type: sections.TypeDrop, Energy: 0.5}
-	return sectionEvents(song, section, style, targets, 0)
+	return sectionEvents(song, section, style, targets, 0, dynamics)
 }
 
-func transitionEvents(song analysis.SongAnalysis, section sections.Section, style styles.Style, targets []effects.Target, sectionIndex int) []timeline.Event {
+func transitionEvents(song analysis.SongAnalysis, section sections.Section, style styles.Style, targets []effects.Target, sectionIndex int, dynamics dynamicsPolicy) []timeline.Event {
 	if len(targets) == 0 {
 		return nil
 	}
 
-	dynamics := dynamicsFor(song.Dynamics)
 	beatMS := beatDurationMS(song.BPM)
 	pulses := transitionPulseCount(section.Type)
 	if dynamics.maxTransitionPulses > 0 {
@@ -339,8 +352,12 @@ type dynamicsPolicy struct {
 	maxTransitionPulses int
 }
 
-func dynamicsFor(dynamics analysis.TrackDynamics) dynamicsPolicy {
-	switch dynamics.Profile {
+func dynamicsFor(dynamics analysis.TrackDynamics, override DynamicsOverride) dynamicsPolicy {
+	profile := dynamics.Profile
+	if override != "" && override != DynamicsAuto {
+		profile = string(override)
+	}
+	switch profile {
 	case string(dynamicsCalm):
 		return dynamicsPolicy{
 			profile:             dynamicsCalm,
@@ -404,6 +421,16 @@ func generationAssignments(options Options) []StreamAssignment {
 		return options.Config.Assignments
 	}
 	return options.Assignments
+}
+
+func generationDynamics(options Options) DynamicsOverride {
+	if options.Config.Dynamics != "" {
+		return options.Config.Dynamics
+	}
+	if options.Dynamics != "" {
+		return options.Dynamics
+	}
+	return DynamicsAuto
 }
 
 func streamsByID(streams []analysis.Stream) map[string]analysis.Stream {
@@ -701,6 +728,10 @@ func AvailableModes() []string {
 	return []string{string(GenerationModeSongWide), string(GenerationModeMusicalLayers)}
 }
 
+func AvailableDynamics() []string {
+	return []string{string(DynamicsAuto), string(DynamicsCalm), string(DynamicsBalanced), string(DynamicsEnergetic)}
+}
+
 func ValidateStyle(name string) error {
 	_, err := styles.Get(name)
 	if err != nil {
@@ -715,5 +746,14 @@ func ValidateMode(mode GenerationMode) error {
 		return nil
 	default:
 		return fmt.Errorf("unsupported generation mode %q; available modes: %s", mode, strings.Join(AvailableModes(), ", "))
+	}
+}
+
+func ValidateDynamics(dynamics DynamicsOverride) error {
+	switch dynamics {
+	case "", DynamicsAuto, DynamicsCalm, DynamicsBalanced, DynamicsEnergetic:
+		return nil
+	default:
+		return fmt.Errorf("unsupported dynamics override %q; available values: %s", dynamics, strings.Join(AvailableDynamics(), ", "))
 	}
 }

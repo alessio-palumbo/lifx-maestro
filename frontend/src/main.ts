@@ -1,6 +1,6 @@
 import './style.css';
 
-import { Analyze, AnalyzerPreparing, AudioDuration, ChooseAudioFile, ChooseTimelineSavePath, DiscoverDevices, GenerateFromAnalysis, GenerationModes, MasterBrightness, PausePreview, ResumePreview, SaveTimeline, SetMasterBrightness, StartAudioPreview, StartPreview, StopPreview, Styles } from '../wailsjs/go/main/App';
+import { Analyze, AnalyzerPreparing, AudioDuration, ChooseAudioFile, ChooseTimelineSavePath, DiscoverDevices, DynamicsOptions, GenerateFromAnalysis, GenerationModes, MasterBrightness, PausePreview, ResumePreview, SaveTimeline, SetMasterBrightness, StartAudioPreview, StartPreview, StopPreview, Styles } from '../wailsjs/go/main/App';
 
 // The walkthrough only appears while the bundled analyzer is preparing itself,
 // which is the one moment there is a wait worth filling. Set LIFX_MAESTRO_FORCE_TOUR
@@ -117,6 +117,7 @@ type EditorSession = {
   song_name: string;
   style: string;
   generation: string;
+  dynamics: string;
   target: string;
   analysis: {
     duration_ms: number;
@@ -146,6 +147,8 @@ type AppState = {
   styles: string[];
   generationModes: string[];
   generationMode: string;
+  dynamicsOptions: string[];
+  dynamicsOverride: string;
   layerAssignments: Record<string, string>;
   selectedEvent: number;
   selectedDevice: string;
@@ -171,6 +174,7 @@ type AppState = {
     song: boolean;
     style: boolean;
     generation: boolean;
+    dynamics: boolean;
     assignments: boolean;
     target: boolean;
     devices: boolean;
@@ -178,6 +182,7 @@ type AppState = {
   regenerationPrompt: boolean;
   generatedStyle: string;
   generatedGenerationMode: string;
+  generatedDynamicsOverride: string;
   zoomPxPerSecond: number;
   energyZoom: number;
   energyScrollLeft: number;
@@ -194,6 +199,8 @@ const state: AppState = {
   styles: [],
   generationModes: ['song_wide', 'musical_layers'],
   generationMode: 'song_wide',
+  dynamicsOptions: ['auto', 'calm', 'balanced', 'energetic'],
+  dynamicsOverride: 'auto',
   layerAssignments: {},
   selectedEvent: -1,
   selectedDevice: 'all',
@@ -213,6 +220,7 @@ const state: AppState = {
     song: false,
     style: false,
     generation: false,
+    dynamics: false,
     assignments: false,
     target: false,
     devices: false,
@@ -220,6 +228,7 @@ const state: AppState = {
   regenerationPrompt: false,
   generatedStyle: '',
   generatedGenerationMode: 'song_wide',
+  generatedDynamicsOverride: 'auto',
   zoomPxPerSecond: 16,
   energyZoom: 1,
   energyScrollLeft: 0,
@@ -265,6 +274,7 @@ async function bootstrap() {
   try {
     state.styles = await Styles();
     state.generationModes = await GenerationModes();
+    state.dynamicsOptions = await DynamicsOptions();
     state.status = 'Discovering LIFX LAN devices';
     render();
     state.devices = await DiscoverDevices() as unknown as DeviceInfo[];
@@ -615,6 +625,11 @@ function renderOverview() {
   }
   const visibleEvents = visibleTimelineEventCount(session);
   const dynamics = dynamicsSummary(session.analysis.dynamics);
+  const dynamicsOverride = session.dynamics || state.dynamicsOverride;
+  const dynamicsOptions = state.dynamicsOptions.map((option) => {
+    const selected = option === dynamicsOverride ? 'selected' : '';
+    return `<option value="${escapeAttr(option)}" ${selected}>${escapeHTML(dynamicsOverrideLabel(option, dynamics.label))}</option>`;
+  }).join('');
   return `
     <section class="overview">
       <div class="overview-title">
@@ -623,13 +638,23 @@ function renderOverview() {
       </div>
       <div class="summary-grid">
         <div><span>BPM</span><strong>${formatNumber(session.summary.bpm, 1)}</strong></div>
-        <div title="${escapeAttr(dynamics.detail)}"><span>Dynamics</span><strong>${escapeHTML(dynamics.label)}</strong></div>
+        <div title="${escapeAttr(dynamics.detail)}">
+          <span>Dynamics</span>
+          <select id="dynamics-override" class="summary-select" aria-label="Show intensity">${dynamicsOptions}</select>
+        </div>
         <div><span>Events</span><strong>${visibleEvents}</strong></div>
         <div><span>Beats</span><strong>${session.summary.beats}</strong></div>
         <div><span>Sections</span><strong>${session.summary.sections}</strong></div>
       </div>
     </section>
   `;
+}
+
+function dynamicsOverrideLabel(override: string, detected: string) {
+  if (override === 'auto') {
+    return detected === '—' ? 'Auto' : `Auto: ${detected}`;
+  }
+  return `${override[0].toUpperCase()}${override.slice(1)}`;
 }
 
 function dynamicsSummary(dynamics?: TrackDynamics) {
@@ -954,6 +979,15 @@ function bindEvents() {
     handleGenerationChanged(selectedMode);
     render();
   });
+  document.querySelector('#dynamics-override')?.addEventListener('change', () => {
+    const selectedDynamics = inputValue('dynamics-override', state.dynamicsOverride);
+    state.dynamicsOverride = selectedDynamics;
+    if (state.session) {
+      state.session.dynamics = selectedDynamics;
+    }
+    handleDynamicsChanged(selectedDynamics);
+    render();
+  });
   document.querySelector('#toggle-sidebar')?.addEventListener('click', () => {
     state.sidebarOpen = !state.sidebarOpen;
     render();
@@ -1167,6 +1201,7 @@ async function chooseSong() {
     state.regenerationPrompt = false;
     state.generatedStyle = '';
     state.generatedGenerationMode = state.generationMode;
+    state.generatedDynamicsOverride = state.dynamicsOverride;
     state.status = `Selected ${fileName(path)}; press Generate to analyze`;
     state.session = emptySession(path);
     state.regenerationReasons.song = true;
@@ -1226,6 +1261,7 @@ async function discoverDevices() {
 async function generateForPath(path: string) {
   const style = inputValue('style', state.session?.style ?? 'synthwave');
   const generation = inputValue('generation-mode', state.generationMode);
+  const dynamics = inputValue('dynamics-override', state.dynamicsOverride);
   const target = targetString();
   stopPlayback(false);
   state.error = null;
@@ -1237,9 +1273,10 @@ async function generateForPath(path: string) {
     const songAnalysis = existingAnalysis ?? await Analyze(path);
     state.status = 'Generating timeline';
     render();
-    state.session = await GenerateFromAnalysis(path, songAnalysis as any, style, target, generation, streamAssignments(generation), (state.session?.devices ?? state.devices) as any) as unknown as EditorSession;
+    state.session = await GenerateFromAnalysis(path, songAnalysis as any, style, target, generation, dynamics, streamAssignments(generation), (state.session?.devices ?? state.devices) as any) as unknown as EditorSession;
     state.devices = state.session.devices;
     state.generationMode = state.session.generation || generation;
+    state.dynamicsOverride = state.session.dynamics || dynamics;
     ensureLayerAssignments();
     state.selectedAudioPath = path;
     state.targetTokens = splitTarget(state.session.target);
@@ -1249,6 +1286,7 @@ async function generateForPath(path: string) {
     clearRegenerationReasons();
     state.generatedStyle = state.session.style;
     state.generatedGenerationMode = state.session.generation;
+    state.generatedDynamicsOverride = state.session.dynamics;
     state.regenerationPrompt = false;
     state.status = 'Generated editable timeline';
   } catch (error) {
@@ -1465,6 +1503,7 @@ function emptySession(path: string): EditorSession {
     song_name: name,
     style: inputValue('style', state.styles[0] ?? 'synthwave'),
     generation: inputValue('generation-mode', state.generationMode),
+    dynamics: state.dynamicsOverride,
     target,
     analysis: {
       duration_ms: 0,
@@ -1589,6 +1628,23 @@ function handleGenerationChanged(selectedMode: string) {
     return;
   }
   markRegenerationRequired('generation', 'Generation mode changed; regenerate to update choreography');
+  state.regenerationPrompt = true;
+}
+
+function handleDynamicsChanged(selectedDynamics: string) {
+  if (state.session?.source !== 'generated') {
+    return;
+  }
+  if (selectedDynamics === state.generatedDynamicsOverride) {
+    state.regenerationReasons.dynamics = false;
+    updateNeedsRegeneration();
+    if (!state.needsRegeneration) {
+      state.regenerationPrompt = false;
+    }
+    state.status = 'Show intensity restored to generated timeline';
+    return;
+  }
+  markRegenerationRequired('dynamics', 'Show intensity changed; regenerate to update choreography');
   state.regenerationPrompt = true;
 }
 
@@ -1997,6 +2053,7 @@ function clearRegenerationReasons() {
     song: false,
     style: false,
     generation: false,
+    dynamics: false,
     assignments: false,
     target: false,
     devices: false,
@@ -2040,6 +2097,9 @@ function regenerationMessage() {
   }
   if (state.regenerationReasons.generation) {
     return 'The selected generation mode needs timeline regeneration before playing lights.';
+  }
+  if (state.regenerationReasons.dynamics) {
+    return 'The selected show intensity needs timeline regeneration before playing lights.';
   }
   if (state.regenerationReasons.assignments) {
     return 'Layer assignments changed. Regenerate to update which musical layer each device follows.';

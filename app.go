@@ -84,6 +84,7 @@ type EditorSession struct {
 	SongName   string                `json:"song_name"`
 	Style      string                `json:"style"`
 	Generation string                `json:"generation"`
+	Dynamics   string                `json:"dynamics"`
 	Target     string                `json:"target"`
 	Analysis   analysis.SongAnalysis `json:"analysis"`
 	Timeline   EditorTimeline        `json:"timeline"`
@@ -184,6 +185,10 @@ func (a *App) GenerationModes() []string {
 	return generation.AvailableModes()
 }
 
+func (a *App) DynamicsOptions() []string {
+	return generation.AvailableDynamics()
+}
+
 func (a *App) DiscoverDevices() ([]EditorDevice, error) {
 	controller, err := a.lifxController()
 	if err != nil {
@@ -228,12 +233,12 @@ func (a *App) ChooseTimelineSavePath(defaultName string) (string, error) {
 	})
 }
 
-func (a *App) Generate(audioPath string, style string, target string, generationMode string, assignments []generation.StreamAssignment, editorDevices []EditorDevice) (*EditorSession, error) {
+func (a *App) Generate(audioPath string, style string, target string, generationMode string, dynamics string, assignments []generation.StreamAssignment, editorDevices []EditorDevice) (*EditorSession, error) {
 	result, err := a.Analyze(audioPath)
 	if err != nil {
 		return nil, err
 	}
-	return a.GenerateFromAnalysis(audioPath, result, style, target, generationMode, assignments, editorDevices)
+	return a.GenerateFromAnalysis(audioPath, result, style, target, generationMode, dynamics, assignments, editorDevices)
 }
 
 // forceTourEnv shows the walkthrough on demand. Development builds have no
@@ -334,7 +339,7 @@ func (a *App) ensureAnalyzerInstalled() (string, error) {
 	return analyzerbin.EnsureInstalled()
 }
 
-func (a *App) GenerateFromAnalysis(audioPath string, song analysis.SongAnalysis, style string, target string, generationMode string, assignments []generation.StreamAssignment, editorDevices []EditorDevice) (*EditorSession, error) {
+func (a *App) GenerateFromAnalysis(audioPath string, song analysis.SongAnalysis, style string, target string, generationMode string, dynamics string, assignments []generation.StreamAssignment, editorDevices []EditorDevice) (*EditorSession, error) {
 	if strings.TrimSpace(audioPath) == "" {
 		return nil, fmt.Errorf("audio path is required")
 	}
@@ -356,8 +361,14 @@ func (a *App) GenerateFromAnalysis(audioPath string, song analysis.SongAnalysis,
 	if err := generation.ValidateMode(generation.GenerationMode(generationMode)); err != nil {
 		return nil, err
 	}
+	if dynamics == "" {
+		dynamics = string(generation.DynamicsAuto)
+	}
+	if err := generation.ValidateDynamics(generation.DynamicsOverride(dynamics)); err != nil {
+		return nil, err
+	}
 
-	return buildEditorSessionWithDevices(audioPath, filepath.Base(audioPath), style, target, generationMode, assignments, "generated", song, editorDevices)
+	return buildEditorSessionWithDevices(audioPath, filepath.Base(audioPath), style, target, generationMode, dynamics, assignments, "generated", song, editorDevices)
 }
 
 func (a *App) SaveTimeline(request SaveTimelineRequest) error {
@@ -537,10 +548,10 @@ func (a *App) lifxController() (*devices.LifxDeviceController, error) {
 }
 
 func buildEditorSession(songPath string, songName string, style string, target string, source string, song analysis.SongAnalysis) (*EditorSession, error) {
-	return buildEditorSessionWithDevices(songPath, songName, style, target, string(generation.GenerationModeSongWide), nil, source, song, nil)
+	return buildEditorSessionWithDevices(songPath, songName, style, target, string(generation.GenerationModeSongWide), string(generation.DynamicsAuto), nil, source, song, nil)
 }
 
-func buildEditorSessionWithDevices(songPath string, songName string, style string, target string, generationMode string, assignments []generation.StreamAssignment, source string, song analysis.SongAnalysis, editorDevices []EditorDevice) (*EditorSession, error) {
+func buildEditorSessionWithDevices(songPath string, songName string, style string, target string, generationMode string, dynamics string, assignments []generation.StreamAssignment, source string, song analysis.SongAnalysis, editorDevices []EditorDevice) (*EditorSession, error) {
 	infos := editorDeviceInfosFromEditor(editorDevices)
 	if len(infos) == 0 {
 		infos = editorDeviceInfos()
@@ -550,6 +561,7 @@ func buildEditorSessionWithDevices(songPath string, songName string, style strin
 		Target:      target,
 		Style:       style,
 		Mode:        generation.GenerationMode(generationMode),
+		Dynamics:    generation.DynamicsOverride(dynamics),
 		Assignments: assignments,
 		Devices:     infos,
 	})
@@ -562,6 +574,7 @@ func buildEditorSessionWithDevices(songPath string, songName string, style strin
 		SongName:   songName,
 		Style:      style,
 		Generation: generationMode,
+		Dynamics:   dynamics,
 		Target:     target,
 		Analysis:   song,
 		Timeline:   editorTimelineFromTimeline(*tl),

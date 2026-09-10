@@ -122,11 +122,12 @@ func generateCommand() *cli.Command {
 			&cli.StringFlag{Name: "output", Usage: "timeline JSON output path"},
 			&cli.StringFlag{Name: "style", Usage: "generation style"},
 			&cli.StringFlag{Name: "generation", Value: string(generation.GenerationModeSongWide), Usage: "generation mode (song_wide or musical_layers)"},
+			&cli.StringFlag{Name: "intensity", Value: string(generation.DynamicsAuto), Usage: "show intensity (auto, calm, balanced, or energetic)"},
 			&cli.StringFlag{Name: "target", Value: "all", Usage: "timeline target selector"},
 			&cli.StringFlag{Name: "python", Usage: "python executable (overrides the bundled analyzer)"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			audioPath, err := singleArg(cmd, "maestro generate [--output projects/song.json] [--style synthwave] [--generation song_wide] [--target all] [--python analyzer/.venv/bin/python] <song.mp3|song.wav>")
+			audioPath, err := singleArg(cmd, "maestro generate [--output projects/song.json] [--style synthwave] [--generation song_wide] [--intensity auto] [--target all] [--python analyzer/.venv/bin/python] <song.mp3|song.wav>")
 			if err != nil {
 				return err
 			}
@@ -153,10 +154,11 @@ func generateCommand() *cli.Command {
 			}
 
 			tl, err := generation.Generate(*result, generation.Options{
-				Name:   audio.TimelineName(audioPath),
-				Target: cmd.String("target"),
-				Style:  cmd.String("style"),
-				Mode:   generation.GenerationMode(cmd.String("generation")),
+				Name:     audio.TimelineName(audioPath),
+				Target:   cmd.String("target"),
+				Style:    cmd.String("style"),
+				Mode:     generation.GenerationMode(cmd.String("generation")),
+				Dynamics: generation.DynamicsOverride(cmd.String("intensity")),
 			})
 			if err != nil {
 				return err
@@ -182,11 +184,12 @@ func performCommand() *cli.Command {
 			&cli.BoolFlag{Name: "verbose", Usage: "print synchronization details"},
 			&cli.StringFlag{Name: "style", Usage: "generation style"},
 			&cli.StringFlag{Name: "generation", Value: string(generation.GenerationModeSongWide), Usage: "generation mode (song_wide or musical_layers)"},
+			&cli.StringFlag{Name: "intensity", Value: string(generation.DynamicsAuto), Usage: "show intensity (auto, calm, balanced, or energetic)"},
 			&cli.StringFlag{Name: "target", Value: "all", Usage: "target selector"},
 			&cli.StringFlag{Name: "python", Usage: "python executable (overrides the bundled analyzer)"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			audioPath, err := singleArg(cmd, "maestro perform [--dry-run] [--verbose] [--style synthwave] [--generation song_wide] [--target all] [--python analyzer/.venv/bin/python] <song.mp3>")
+			audioPath, err := singleArg(cmd, "maestro perform [--dry-run] [--verbose] [--style synthwave] [--generation song_wide] [--intensity auto] [--target all] [--python analyzer/.venv/bin/python] <song.mp3>")
 			if err != nil {
 				return err
 			}
@@ -216,6 +219,7 @@ func performCommand() *cli.Command {
 				Style:    cmd.String("style"),
 				Target:   target,
 				Mode:     generation.GenerationMode(cmd.String("generation")),
+				Dynamics: generation.DynamicsOverride(cmd.String("intensity")),
 				Analyzer: analyzer,
 				Verbose:  cmd.Bool("verbose"),
 				Out:      os.Stdout,

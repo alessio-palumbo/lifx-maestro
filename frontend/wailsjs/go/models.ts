@@ -298,6 +298,7 @@ export namespace main {
 	    song_name: string;
 	    style: string;
 	    generation: string;
+	    dynamics: string;
 	    target: string;
 	    analysis: analysis.SongAnalysis;
 	    timeline: EditorTimeline;
@@ -317,6 +318,7 @@ export namespace main {
 	        this.song_name = source["song_name"];
 	        this.style = source["style"];
 	        this.generation = source["generation"];
+	        this.dynamics = source["dynamics"];
 	        this.target = source["target"];
 	        this.analysis = this.convertValues(source["analysis"], analysis.SongAnalysis);
 	        this.timeline = this.convertValues(source["timeline"], EditorTimeline);

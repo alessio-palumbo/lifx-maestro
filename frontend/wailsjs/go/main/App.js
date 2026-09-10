@@ -26,12 +26,16 @@ export function DiscoverDevices() {
   return window['go']['main']['App']['DiscoverDevices']();
 }
 
-export function Generate(arg1, arg2, arg3, arg4, arg5, arg6) {
-  return window['go']['main']['App']['Generate'](arg1, arg2, arg3, arg4, arg5, arg6);
+export function DynamicsOptions() {
+  return window['go']['main']['App']['DynamicsOptions']();
 }
 
-export function GenerateFromAnalysis(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
-  return window['go']['main']['App']['GenerateFromAnalysis'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
+export function Generate(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
+  return window['go']['main']['App']['Generate'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
+}
+
+export function GenerateFromAnalysis(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {
+  return window['go']['main']['App']['GenerateFromAnalysis'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
 }
 
 export function GenerationModes() {

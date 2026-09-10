@@ -170,6 +170,7 @@ Options:
 - `--output string`: timeline JSON output path. If omitted, writes to `projects/<song-name>.json`
 - `--style string`: generation style
 - `--generation string`: generation mode. Default: `song_wide`. Available: `song_wide`, `musical_layers`
+- `--intensity string`: show intensity override. Default: `auto`. Available: `auto`, `calm`, `balanced`, `energetic`
 - `--target string`: timeline target selector. Default: `all`
 - `--python string`: Python executable to use instead of the bundled analyzer. Default: the bundled analyzer in released builds, otherwise `analyzer/.venv/bin/python`, then `.venv/bin/python`, then `python3`
 
@@ -179,6 +180,7 @@ Examples:
 go run ./cmd/maestro generate samples/song.mp3 --output projects/song.json
 go run ./cmd/maestro generate samples/song.mp3 --style neon --target desk
 go run ./cmd/maestro generate samples/song.mp3 --generation musical_layers --target tv,desk
+go run ./cmd/maestro generate samples/song.mp3 --intensity calm --target desk
 go run ./cmd/maestro generate samples/song.mp3 --style minimal --python .venv/bin/python
 ```
 
@@ -196,6 +198,7 @@ Options:
 - `--verbose`: print analysis, scheduler, and playback logs
 - `--style string`: generation style
 - `--generation string`: generation mode. Default: `song_wide`. Available: `song_wide`, `musical_layers`
+- `--intensity string`: show intensity override. Default: `auto`. Available: `auto`, `calm`, `balanced`, `energetic`
 - `--target string`: target selector. Default: `all`
 - `--python string`: Python executable to use instead of the bundled analyzer. Default: the bundled analyzer in released builds, otherwise `analyzer/.venv/bin/python`, then `.venv/bin/python`, then `python3`
 
@@ -207,6 +210,7 @@ go run ./cmd/maestro perform samples/song.mp3 --style synthwave --target all
 go run ./cmd/maestro perform samples/song.mp3 --style cinematic --target desk
 go run ./cmd/maestro perform samples/song.mp3 --style neon --target tv,desk
 go run ./cmd/maestro perform samples/song.mp3 --generation musical_layers --target tv,desk
+go run ./cmd/maestro perform samples/song.mp3 --intensity energetic --target all
 ```
 
 During `perform`, audio playback owns the master clock. The lighting scheduler follows the audio position rather than using an independent wall-clock timer.
@@ -303,6 +307,10 @@ sparser pulses, softer brightness, longer transitions, and restrained section
 accents, while energetic tracks retain the faster choreography. Section energy
 still controls variation within the song, so a calm track can build without being
 rendered like an energetic dance track.
+
+The desktop Dynamics control and the CLI `--intensity` flag can override that
+profile without modifying the analysis. Changing it regenerates only the static
+timeline; `auto` remains the default.
 
 ## Device Targets
 

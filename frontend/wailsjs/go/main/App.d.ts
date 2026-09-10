@@ -16,9 +16,11 @@ export function ChooseTimelineSavePath(arg1:string):Promise<string>;
 
 export function DiscoverDevices():Promise<Array<main.EditorDevice>>;
 
-export function Generate(arg1:string,arg2:string,arg3:string,arg4:string,arg5:Array<generation.StreamAssignment>,arg6:Array<main.EditorDevice>):Promise<main.EditorSession>;
+export function DynamicsOptions():Promise<Array<string>>;
 
-export function GenerateFromAnalysis(arg1:string,arg2:analysis.SongAnalysis,arg3:string,arg4:string,arg5:string,arg6:Array<generation.StreamAssignment>,arg7:Array<main.EditorDevice>):Promise<main.EditorSession>;
+export function Generate(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:Array<generation.StreamAssignment>,arg7:Array<main.EditorDevice>):Promise<main.EditorSession>;
+
+export function GenerateFromAnalysis(arg1:string,arg2:analysis.SongAnalysis,arg3:string,arg4:string,arg5:string,arg6:string,arg7:Array<generation.StreamAssignment>,arg8:Array<main.EditorDevice>):Promise<main.EditorSession>;
 
 export function GenerationModes():Promise<Array<string>>;
 

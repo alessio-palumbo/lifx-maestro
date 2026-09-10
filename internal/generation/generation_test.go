@@ -112,6 +112,35 @@ func TestGenerateCalmTrackUsesGentlerChoreography(t *testing.T) {
 	}
 }
 
+func TestGenerateDynamicsOverrideReplacesAnalyzedProfile(t *testing.T) {
+	song := testSong()
+	song.Dynamics = analysis.TrackDynamics{Profile: "calm", Intensity: 0.22}
+	song.Sections = []analysis.Section{{StartMS: 0, EndMS: song.DurationMS, Type: "drop", Energy: 0.85}}
+
+	automatic, err := Generate(song, Options{Name: "automatic", Target: "desk", Dynamics: DynamicsAuto})
+	if err != nil {
+		t.Fatal(err)
+	}
+	overridden, err := Generate(song, Options{Name: "overridden", Target: "desk", Dynamics: DynamicsEnergetic})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(overridden.Events) <= len(automatic.Events) {
+		t.Fatalf("energetic override events = %d, automatic calm events = %d; override should increase density", len(overridden.Events), len(automatic.Events))
+	}
+	if song.Dynamics.Profile != "calm" {
+		t.Fatalf("generation mutated analyzed profile to %q", song.Dynamics.Profile)
+	}
+}
+
+func TestGenerateRejectsUnknownDynamicsOverride(t *testing.T) {
+	_, err := Generate(testSong(), Options{Dynamics: DynamicsOverride("extreme")})
+	if err == nil {
+		t.Fatal("expected unknown dynamics override error")
+	}
+}
+
 func TestGenerateCalmMusicalLayersThinsStreamAccents(t *testing.T) {
 	base := testSong()
 	base.Streams = []analysis.Stream{
