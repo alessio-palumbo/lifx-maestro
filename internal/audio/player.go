@@ -155,6 +155,12 @@ func (p *BeepPlayer) closeDone() {
 // resampleQuality trades CPU for fidelity on a scale beep documents as 1-4.
 const resampleQuality = 4
 
+// A small buffer keeps transport controls responsive, but 30ms proved too easy
+// to underrun on quiet, transient material where a short dropout is conspicuous.
+// 60ms remains short enough for the audio clock while giving decoding and the OS
+// audio callback more scheduling headroom.
+const speakerBufferDuration = 60 * time.Millisecond
+
 var (
 	speakerOnce sync.Once
 	speakerRate beep.SampleRate
@@ -166,7 +172,7 @@ var (
 // callers resample to the rate returned here.
 func initSpeaker(sampleRate beep.SampleRate) (beep.SampleRate, error) {
 	speakerOnce.Do(func() {
-		bufferSize := sampleRate.N(30 * time.Millisecond)
+		bufferSize := sampleRate.N(speakerBufferDuration)
 		if err := speaker.Init(sampleRate, bufferSize); err != nil {
 			speakerErr = err
 			return
