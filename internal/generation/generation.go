@@ -121,6 +121,7 @@ func layeredEvents(song analysis.SongAnalysis, style styles.Style, targets []eff
 func streamSectionEvents(song analysis.SongAnalysis, section sections.Section, style styles.Style, streamTargets map[string][]effects.Target, sectionIndex int) []timeline.Event {
 	var events []timeline.Event
 	streams := streamsByID(song.Streams)
+	dynamics := dynamicsFor(song.Dynamics)
 	for _, spec := range []struct {
 		id       string
 		section  sections.Type
@@ -150,10 +151,10 @@ func streamSectionEvents(song analysis.SongAnalysis, section sections.Section, s
 			Energy:      stream.Energy,
 			Targets:     targets,
 			Palette:     style.Palette,
-			MinBright:   minBrightness(section, style) * spec.minScale,
-			MaxBright:   maxBrightness(section, style) * spec.maxScale,
-			DurationMS:  max(45, int64(float64(effectDuration(song.BPM, streamSection, style))*spec.duration)),
-			BeatStep:    spec.beatStep,
+			MinBright:   minBrightness(section, style) * spec.minScale * dynamics.brightnessScale,
+			MaxBright:   maxBrightness(section, style) * spec.maxScale * dynamics.brightnessScale,
+			DurationMS:  max(45, int64(float64(effectDuration(song.BPM, streamSection, style))*spec.duration*dynamics.durationScale)),
+			BeatStep:    max(spec.beatStep, dynamics.minBeatStep),
 			TargetShift: sectionIndex + spec.shift,
 		}
 		switch spec.effect {
@@ -177,10 +178,10 @@ func streamSectionEvents(song analysis.SongAnalysis, section sections.Section, s
 				Energy:      full.Energy,
 				Targets:     targets,
 				Palette:     style.Palette,
-				MinBright:   minBrightness(section, style),
-				MaxBright:   clamp(maxBrightness(section, style)*1.08, 0.08, 1),
-				DurationMS:  max(45, effectDuration(song.BPM, section, style)/2),
-				BeatStep:    1,
+				MinBright:   minBrightness(section, style) * dynamics.brightnessScale,
+				MaxBright:   clamp(maxBrightness(section, style)*1.08*dynamics.brightnessScale, 0.08, 1),
+				DurationMS:  max(45, int64(float64(effectDuration(song.BPM, section, style))*dynamics.durationScale/2)),
+				BeatStep:    dynamics.minBeatStep,
 				TargetShift: sectionIndex,
 			}
 			events = append(events, effects.Pulse{}.Generate(ctx)...)
@@ -190,16 +191,17 @@ func streamSectionEvents(song analysis.SongAnalysis, section sections.Section, s
 }
 
 func sectionEvents(song analysis.SongAnalysis, section sections.Section, style styles.Style, targets []effects.Target, sectionIndex int) []timeline.Event {
+	dynamics := dynamicsFor(song.Dynamics)
 	ctx := effects.Context{
 		Section:     section,
 		Beats:       song.Beats,
 		Energy:      song.Energy,
 		Targets:     targets,
 		Palette:     style.Palette,
-		MinBright:   minBrightness(section, style),
-		MaxBright:   maxBrightness(section, style),
-		DurationMS:  effectDuration(song.BPM, section, style),
-		BeatStep:    beatStep(section, style),
+		MinBright:   minBrightness(section, style) * dynamics.brightnessScale,
+		MaxBright:   maxBrightness(section, style) * dynamics.brightnessScale,
+		DurationMS:  int64(float64(effectDuration(song.BPM, section, style)) * dynamics.durationScale),
+		BeatStep:    max(beatStep(section, style), dynamics.minBeatStep),
 		TargetShift: sectionIndex,
 	}
 
@@ -213,7 +215,11 @@ func sectionEvents(song analysis.SongAnalysis, section sections.Section, style s
 	case sections.TypeBuild:
 		return effects.AlternatingPulse{}.Generate(ctx)
 	case sections.TypeDrop:
-		ctx.BeatStep = 1
+		if dynamics.profile == dynamicsCalm {
+			events := effects.Breathing{}.Generate(ctx)
+			ctx.DurationMS = max(120, ctx.DurationMS/3)
+			return append(events, effects.Pulse{}.Generate(ctx)...)
+		}
 		ctx.DurationMS = max(45, ctx.DurationMS/2)
 		return effects.Sweep{}.Generate(ctx)
 	case sections.TypeBreakdown:
@@ -243,20 +249,26 @@ func transitionEvents(song analysis.SongAnalysis, section sections.Section, styl
 		return nil
 	}
 
+	dynamics := dynamicsFor(song.Dynamics)
 	beatMS := beatDurationMS(song.BPM)
 	pulses := transitionPulseCount(section.Type)
+	if dynamics.maxTransitionPulses > 0 {
+		pulses = min(pulses, dynamics.maxTransitionPulses)
+	}
 	if pulses == 0 {
 		return nil
 	}
-	durationMS := max(40, beatMS/4)
-	brightness := clamp(maxBrightness(section, style)*1.15, 0.18, 1.0)
+	durationMS := max(40, int64(float64(beatMS/4)*dynamics.durationScale))
+	brightness := clamp(maxBrightness(section, style)*1.15*dynamics.brightnessScale, 0.18, 1.0)
 	kind := rendering.IntentPulse
 
 	switch section.Type {
 	case sections.TypeBuild:
 		kind = rendering.IntentPulse
 	case sections.TypeDrop:
-		kind = rendering.IntentSweep
+		if dynamics.profile != dynamicsCalm {
+			kind = rendering.IntentSweep
+		}
 	case sections.TypeBreakdown:
 		brightness *= 0.75
 	case sections.TypeOutro:
@@ -309,6 +321,52 @@ func beatDurationMS(bpm float64) int64 {
 		beatMS = int64(60000 / bpm)
 	}
 	return min(max(beatMS, 220), 1200)
+}
+
+type dynamicsProfile string
+
+const (
+	dynamicsCalm      dynamicsProfile = "calm"
+	dynamicsBalanced  dynamicsProfile = "balanced"
+	dynamicsEnergetic dynamicsProfile = "energetic"
+)
+
+type dynamicsPolicy struct {
+	profile             dynamicsProfile
+	brightnessScale     float64
+	durationScale       float64
+	minBeatStep         int
+	maxTransitionPulses int
+}
+
+func dynamicsFor(dynamics analysis.TrackDynamics) dynamicsPolicy {
+	switch dynamics.Profile {
+	case string(dynamicsCalm):
+		return dynamicsPolicy{
+			profile:             dynamicsCalm,
+			brightnessScale:     0.78,
+			durationScale:       1.8,
+			minBeatStep:         4,
+			maxTransitionPulses: 2,
+		}
+	case string(dynamicsBalanced):
+		return dynamicsPolicy{
+			profile:             dynamicsBalanced,
+			brightnessScale:     0.9,
+			durationScale:       1.3,
+			minBeatStep:         2,
+			maxTransitionPulses: 4,
+		}
+	default:
+		// Analyses cached before track dynamics were introduced have an empty
+		// profile. Preserve their previous generation behavior.
+		return dynamicsPolicy{
+			profile:         dynamicsEnergetic,
+			brightnessScale: 1,
+			durationScale:   1,
+			minBeatStep:     1,
+		}
+	}
 }
 
 func styleName(options Options) string {

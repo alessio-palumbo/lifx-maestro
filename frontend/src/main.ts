@@ -102,6 +102,16 @@ type Timeline = {
   events: TimelineEvent[];
 };
 
+type TrackDynamics = {
+  profile: 'calm' | 'balanced' | 'energetic' | '';
+  intensity: number;
+  loudness: number;
+  transient_strength: number;
+  spectral_brightness: number;
+  dynamic_contrast: number;
+  onset_activity: number;
+};
+
 type EditorSession = {
   song_path: string;
   song_name: string;
@@ -113,6 +123,7 @@ type EditorSession = {
     bpm: number;
     beats: number[];
     energy: EnergyPoint[];
+    dynamics?: TrackDynamics;
     sections?: AnalysisSection[];
     streams?: AnalysisStream[];
   };
@@ -603,21 +614,43 @@ function renderOverview() {
     return `<section class="overview empty">No timeline loaded</section>`;
   }
   const visibleEvents = visibleTimelineEventCount(session);
+  const dynamics = dynamicsSummary(session.analysis.dynamics);
   return `
     <section class="overview">
-      <div>
-        <h1>${escapeHTML(session.song_name)}</h1>
+      <div class="overview-title">
+        <h1 title="${escapeAttr(session.song_name)}">${escapeHTML(session.song_name)}</h1>
         <p>${overviewSubtitle(session)}</p>
       </div>
       <div class="summary-grid">
-        <div><span>Duration</span><strong>${formatTime(session.summary.duration_ms)}</strong></div>
         <div><span>BPM</span><strong>${formatNumber(session.summary.bpm, 1)}</strong></div>
+        <div title="${escapeAttr(dynamics.detail)}"><span>Dynamics</span><strong>${escapeHTML(dynamics.label)}</strong></div>
         <div><span>Events</span><strong>${visibleEvents}</strong></div>
         <div><span>Beats</span><strong>${session.summary.beats}</strong></div>
         <div><span>Sections</span><strong>${session.summary.sections}</strong></div>
       </div>
     </section>
   `;
+}
+
+function dynamicsSummary(dynamics?: TrackDynamics) {
+  if (!dynamics?.profile) {
+    return { label: '—', detail: 'Dynamics are available after analyzing the song' };
+  }
+
+  const profile = `${dynamics.profile[0].toUpperCase()}${dynamics.profile.slice(1)}`;
+  const percentage = Math.round(clamp(dynamics.intensity, 0, 1) * 100);
+  const metric = (label: string, value: number) => `${label} ${Math.round(clamp(value, 0, 1) * 100)}%`;
+  return {
+    label: profile,
+    detail: [
+      `Intensity ${percentage}%`,
+      metric('Loudness', dynamics.loudness),
+      metric('Transients', dynamics.transient_strength),
+      metric('Spectral brightness', dynamics.spectral_brightness),
+      metric('Contrast', dynamics.dynamic_contrast),
+      metric('Onset activity', dynamics.onset_activity),
+    ].join('\n'),
+  };
 }
 
 function renderTokenGroup(title: string, values: string[], kind: 'group' | 'location') {

@@ -664,9 +664,12 @@ button {
 }
 
 .overview h1 {
+  overflow: hidden;
   margin: 0;
   font-size: 25px;
   letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .overview p {
@@ -674,8 +677,14 @@ button {
   color: #9aa5b5;
 }
 
+.overview-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .summary-grid {
   display: grid;
+  flex: 0 0 auto;
   grid-template-columns: repeat(5, minmax(82px, 1fr));
   gap: 8px;
   min-width: 470px;

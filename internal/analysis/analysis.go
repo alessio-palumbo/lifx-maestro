@@ -19,6 +19,7 @@ type SongAnalysis struct {
 	BPM        float64       `json:"bpm"`
 	Beats      []int64       `json:"beats"`
 	Energy     []EnergyPoint `json:"energy"`
+	Dynamics   TrackDynamics `json:"dynamics,omitempty"`
 	Sections   []Section     `json:"sections,omitempty"`
 	Streams    []Stream      `json:"streams,omitempty"`
 }
@@ -40,6 +41,16 @@ type Stream struct {
 	Label   string        `json:"label"`
 	Energy  []EnergyPoint `json:"energy"`
 	Accents []int64       `json:"accents"`
+}
+
+type TrackDynamics struct {
+	Profile            string  `json:"profile"`
+	Intensity          float64 `json:"intensity"`
+	Loudness           float64 `json:"loudness"`
+	TransientStrength  float64 `json:"transient_strength"`
+	SpectralBrightness float64 `json:"spectral_brightness"`
+	DynamicContrast    float64 `json:"dynamic_contrast"`
+	OnsetActivity      float64 `json:"onset_activity"`
 }
 
 type Analyzer struct {
@@ -156,6 +167,9 @@ func (s SongAnalysis) Validate() error {
 	if s.BPM < 0 {
 		return fmt.Errorf("analysis bpm must be non-negative")
 	}
+	if err := s.Dynamics.validate(); err != nil {
+		return err
+	}
 	for i, beat := range s.Beats {
 		if beat < 0 {
 			return fmt.Errorf("analysis beat %d must be non-negative", i)
@@ -202,6 +216,29 @@ func (s SongAnalysis) Validate() error {
 			if accent < 0 {
 				return fmt.Errorf("analysis stream %d accent %d must be non-negative", i, j)
 			}
+		}
+	}
+	return nil
+}
+
+func (d TrackDynamics) validate() error {
+	if d.Profile != "" && d.Profile != "calm" && d.Profile != "balanced" && d.Profile != "energetic" {
+		return fmt.Errorf("analysis dynamics profile %q is invalid", d.Profile)
+	}
+	values := []struct {
+		name  string
+		value float64
+	}{
+		{"intensity", d.Intensity},
+		{"loudness", d.Loudness},
+		{"transient_strength", d.TransientStrength},
+		{"spectral_brightness", d.SpectralBrightness},
+		{"dynamic_contrast", d.DynamicContrast},
+		{"onset_activity", d.OnsetActivity},
+	}
+	for _, value := range values {
+		if value.value < 0 || value.value > 1 {
+			return fmt.Errorf("analysis dynamics %s must be between 0 and 1", value.name)
 		}
 	}
 	return nil

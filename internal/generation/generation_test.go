@@ -76,6 +76,76 @@ func TestGenerateDefaultModeMatchesExplicitSongWide(t *testing.T) {
 	}
 }
 
+func TestGenerateCalmTrackUsesGentlerChoreography(t *testing.T) {
+	base := analysis.SongAnalysis{
+		DurationMS: 8000,
+		BPM:        144,
+		Beats:      beatsEvery(0, 8000, 417),
+		Energy: []analysis.EnergyPoint{
+			{TimeMS: 0, Value: 0.65},
+			{TimeMS: 4000, Value: 0.9},
+		},
+		Sections: []analysis.Section{
+			{StartMS: 0, EndMS: 8000, Type: "drop", Energy: 0.85},
+		},
+	}
+
+	calmSong := base
+	calmSong.Dynamics = analysis.TrackDynamics{Profile: "calm", Intensity: 0.22}
+	calm, err := Generate(calmSong, Options{Name: "calm", Target: "desk"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	energeticSong := base
+	energeticSong.Dynamics = analysis.TrackDynamics{Profile: "energetic", Intensity: 0.93}
+	energetic, err := Generate(energeticSong, Options{Name: "energetic", Target: "desk"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(calm.Events) >= len(energetic.Events) {
+		t.Fatalf("calm events = %d, energetic events = %d; calm choreography should be sparser", len(calm.Events), len(energetic.Events))
+	}
+	if maxEventBrightness(t, calm.Events) >= maxEventBrightness(t, energetic.Events) {
+		t.Fatalf("calm max brightness should be lower than energetic max brightness")
+	}
+}
+
+func TestGenerateCalmMusicalLayersThinsStreamAccents(t *testing.T) {
+	base := testSong()
+	base.Streams = []analysis.Stream{
+		{ID: "low", Label: "Low (20-250 Hz)", Energy: base.Energy, Accents: beatsEvery(0, 6000, 250)},
+		{ID: "full", Label: "Full spectrum / accents", Energy: base.Energy},
+	}
+	options := Options{
+		Mode:        GenerationModeMusicalLayers,
+		Target:      "desk",
+		Assignments: []StreamAssignment{{Stream: "low", DeviceIDs: []string{"desk"}}},
+		Devices: []devices.DeviceInfo{
+			{ID: "desk", Capabilities: devices.DeviceCapabilities{Kind: devices.DeviceKindSingleZone, HasColor: true, HasKelvin: true}},
+		},
+	}
+
+	calmSong := base
+	calmSong.Dynamics = analysis.TrackDynamics{Profile: "calm", Intensity: 0.22}
+	calm, err := Generate(calmSong, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	energeticSong := base
+	energeticSong.Dynamics = analysis.TrackDynamics{Profile: "energetic", Intensity: 0.93}
+	energetic, err := Generate(energeticSong, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(calm.Events) >= len(energetic.Events) {
+		t.Fatalf("calm layered events = %d, energetic layered events = %d; calm choreography should thin stream accents", len(calm.Events), len(energetic.Events))
+	}
+}
+
 func TestGenerateRejectsUnknownStyle(t *testing.T) {
 	_, err := Generate(analysis.SongAnalysis{
 		DurationMS: 1000,
@@ -457,4 +527,19 @@ func setColorParams(t *testing.T, event timeline.Event) timeline.SetColorParams 
 		t.Fatal(err)
 	}
 	return params
+}
+
+func maxEventBrightness(t *testing.T, events []timeline.Event) float64 {
+	t.Helper()
+	var maximum float64
+	for _, event := range events {
+		if event.Action != "set_color" {
+			continue
+		}
+		params := setColorParams(t, event)
+		if params.Brightness != nil && *params.Brightness > maximum {
+			maximum = *params.Brightness
+		}
+	}
+	return maximum
 }

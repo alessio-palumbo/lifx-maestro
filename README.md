@@ -6,7 +6,7 @@ It ships as a Wails GUI, with `maestro` as an equivalent CLI for scripting and d
 The current implementation can:
 
 - analyze MP3/WAV audio, with no Python install needed in released builds
-- estimate tempo, beats, energy, rough song sections, and spectral musical layers
+- estimate tempo, beats, energy, overall track dynamics, rough song sections, and spectral musical layers
 - generate deterministic timeline JSON
 - play timelines against LIFX LAN devices
 - perform audio and lighting together from the same audio clock
@@ -153,6 +153,7 @@ Output includes:
 - `bpm`
 - `beats`
 - `energy`
+- `dynamics`: a calm, balanced, or energetic track profile plus the normalized measurements behind it
 - `sections`
 - `streams`: low/bass, mids/vocal, percussion/highs, and full-mix accents
 
@@ -296,6 +297,12 @@ Generation modes:
 
 - `song_wide`: the default. All selected devices follow the global beat, energy, and section analysis.
 - `musical_layers`: selected devices are assigned to spectral streams. Multizone devices default to low/bass motion, matrix devices default to percussion/high accents, single-zone devices default to mids/vocal fades, and all devices still receive full-mix section accents.
+
+Generation also uses the track-level dynamics profile. Calm tracks receive
+sparser pulses, softer brightness, longer transitions, and restrained section
+accents, while energetic tracks retain the faster choreography. Section energy
+still controls variation within the song, so a calm track can build without being
+rendered like an energetic dance track.
 
 ## Device Targets
 

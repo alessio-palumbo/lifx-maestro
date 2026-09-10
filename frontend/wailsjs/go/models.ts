@@ -68,11 +68,36 @@ export namespace analysis {
 		    return a;
 		}
 	}
+	export class TrackDynamics {
+	    profile: string;
+	    intensity: number;
+	    loudness: number;
+	    transient_strength: number;
+	    spectral_brightness: number;
+	    dynamic_contrast: number;
+	    onset_activity: number;
+
+	    static createFrom(source: any = {}) {
+	        return new TrackDynamics(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.profile = source["profile"];
+	        this.intensity = source["intensity"];
+	        this.loudness = source["loudness"];
+	        this.transient_strength = source["transient_strength"];
+	        this.spectral_brightness = source["spectral_brightness"];
+	        this.dynamic_contrast = source["dynamic_contrast"];
+	        this.onset_activity = source["onset_activity"];
+	    }
+	}
 	export class SongAnalysis {
 	    duration_ms: number;
 	    bpm: number;
 	    beats: number[];
 	    energy: EnergyPoint[];
+	    dynamics?: TrackDynamics;
 	    sections?: Section[];
 	    streams?: Stream[];
 	
@@ -86,6 +111,7 @@ export namespace analysis {
 	        this.bpm = source["bpm"];
 	        this.beats = source["beats"];
 	        this.energy = this.convertValues(source["energy"], EnergyPoint);
+	        this.dynamics = this.convertValues(source["dynamics"], TrackDynamics);
 	        this.sections = this.convertValues(source["sections"], Section);
 	        this.streams = this.convertValues(source["streams"], Stream);
 	    }

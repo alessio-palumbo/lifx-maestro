@@ -31,6 +31,7 @@ def main():
         "bpm": round(tempo, 3),
         "beats": beats,
         "energy": energy,
+        "dynamics": track_dynamics(y, sr, onset_env),
         "sections": sections(y, sr, duration_ms, energy, onset_env, tempo),
         "streams": streams(y, sr, energy, onset_env, beats),
     }
@@ -93,6 +94,81 @@ def normalize_energy_points(points):
     for point in points:
         point["value"] = round(point["value"] / peak, 4) if peak > 0 else 0.0
     return points
+
+
+def track_dynamics(y, sr, onset_env):
+    """Describe the track's overall force without guessing a genre.
+
+    Note density is deliberately the lightest-weight component: fast piano has
+    many onsets, but its lower loudness, softer transients and darker spectrum
+    should still produce a calm result.
+    """
+    if len(y) == 0:
+        return {
+            "profile": "balanced",
+            "intensity": 0.5,
+            "loudness": 0.5,
+            "transient_strength": 0.5,
+            "spectral_brightness": 0.5,
+            "dynamic_contrast": 0.5,
+            "onset_activity": 0.5,
+        }
+
+    hop_length = 512
+    rms = librosa.feature.rms(y=y, frame_length=2048, hop_length=hop_length)[0]
+    rms_db = librosa.amplitude_to_db(np.maximum(rms, 1e-10), ref=1.0)
+    mean_rms = max(float(np.sqrt(np.mean(y * y))), 1e-10)
+    mean_rms_db = 20 * np.log10(mean_rms)
+    loudness = unit_scale(mean_rms_db, -24.0, -8.0)
+
+    transient_p90 = float(np.percentile(onset_env, 90)) if len(onset_env) else 0.0
+    transient_strength = unit_scale(transient_p90, 0.8, 2.8)
+
+    centroid = librosa.feature.spectral_centroid(y=y, sr=sr, hop_length=hop_length)[0]
+    median_centroid = float(np.median(centroid)) if len(centroid) else 0.0
+    spectral_brightness = unit_scale(median_centroid, 400.0, 4500.0)
+
+    dynamic_spread_db = float(np.percentile(rms_db, 90) - np.percentile(rms_db, 10)) if len(rms_db) else 0.0
+    dynamic_contrast = unit_scale(dynamic_spread_db, 4.0, 14.0)
+
+    onset_times = librosa.onset.onset_detect(
+        onset_envelope=onset_env,
+        sr=sr,
+        hop_length=hop_length,
+        units="time",
+    )
+    duration_s = max(float(len(y)) / float(sr), 0.001)
+    onset_activity = unit_scale(float(len(onset_times)) / duration_s, 1.5, 6.5)
+
+    intensity = (
+        loudness * 0.32
+        + transient_strength * 0.26
+        + spectral_brightness * 0.16
+        + dynamic_contrast * 0.14
+        + onset_activity * 0.12
+    )
+    if intensity < 0.38:
+        profile = "calm"
+    elif intensity >= 0.72:
+        profile = "energetic"
+    else:
+        profile = "balanced"
+
+    return {
+        "profile": profile,
+        "intensity": round(float(intensity), 4),
+        "loudness": round(loudness, 4),
+        "transient_strength": round(transient_strength, 4),
+        "spectral_brightness": round(spectral_brightness, 4),
+        "dynamic_contrast": round(dynamic_contrast, 4),
+        "onset_activity": round(onset_activity, 4),
+    }
+
+
+def unit_scale(value, low, high):
+    if high <= low:
+        return 0.0
+    return float(np.clip((value - low) / (high - low), 0.0, 1.0))
 
 
 def streams(y, sr, full_energy, full_onset_env, beats):
