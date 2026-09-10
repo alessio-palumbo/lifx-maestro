@@ -636,15 +636,17 @@ function renderOverview() {
         <h1 title="${escapeAttr(session.song_name)}">${escapeHTML(session.song_name)}</h1>
         <p>${overviewSubtitle(session)}</p>
       </div>
-      <div class="summary-grid">
-        <div><span>BPM</span><strong>${formatNumber(session.summary.bpm, 1)}</strong></div>
-        <div title="${escapeAttr(dynamics.detail)}">
+      <div class="overview-meta">
+        <label class="dynamics-control" title="${escapeAttr(dynamics.detail)}">
           <span>Dynamics</span>
           <select id="dynamics-override" class="summary-select" aria-label="Show intensity">${dynamicsOptions}</select>
+        </label>
+        <div class="summary-grid">
+          <div><span>BPM</span><strong>${formatNumber(session.summary.bpm, 1)}</strong></div>
+          <div><span>Events</span><strong>${visibleEvents}</strong></div>
+          <div><span>Beats</span><strong>${session.summary.beats}</strong></div>
+          <div><span>Sections</span><strong>${session.summary.sections}</strong></div>
         </div>
-        <div><span>Events</span><strong>${visibleEvents}</strong></div>
-        <div><span>Beats</span><strong>${session.summary.beats}</strong></div>
-        <div><span>Sections</span><strong>${session.summary.sections}</strong></div>
       </div>
     </section>
   `;
