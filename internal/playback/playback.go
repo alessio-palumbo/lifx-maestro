@@ -106,7 +106,12 @@ func (p *Player) PlayWithClock(ctx context.Context, tl *timeline.Timeline, clock
 		go func() {
 			defer wg.Done()
 			for event := range jobs {
-				if err := p.execute(event); err != nil {
+				timelineEvent, ok := event.Value.(timeline.Event)
+				if !ok {
+					errs <- fmt.Errorf("scheduled event %d has unexpected value type", event.Index)
+					continue
+				}
+				if err := p.ExecuteEvent(event.Index, timelineEvent); err != nil {
 					p.logf("[playback] event index=%d error=%v", event.Index, err)
 					errs <- err
 				}
@@ -157,8 +162,14 @@ func (p *Player) execute(scheduled scheduler.Event) error {
 	if !ok {
 		return fmt.Errorf("scheduled event %d has unexpected value type", scheduled.Index)
 	}
+	return p.ExecuteEvent(scheduled.Index, event)
+}
 
-	p.logf("[playback] executing index=%d target=%s action=%s", scheduled.Index, event.Target, event.Action)
+// ExecuteEvent decodes and sends one timeline event immediately. Scheduled
+// playback and Live share this path so device commands retain identical scaling,
+// validation, and fallback behaviour.
+func (p *Player) ExecuteEvent(index int, event timeline.Event) error {
+	p.logf("[playback] executing index=%d target=%s action=%s", index, event.Target, event.Action)
 
 	switch event.Action {
 	case "power_on":
@@ -168,14 +179,14 @@ func (p *Player) execute(scheduled scheduler.Event) error {
 	case "set_color":
 		params, err := colorParams(event.Params)
 		if err != nil {
-			return fmt.Errorf("event %d: %w", scheduled.Index, err)
+			return fmt.Errorf("event %d: %w", index, err)
 		}
 		params.Brightness = p.scaleBrightness(params.Brightness)
 		return p.controller.SetColor(event.Target, params)
 	case "set_zone_colors":
 		params, err := zoneColorParams(event.Params)
 		if err != nil {
-			return fmt.Errorf("event %d: %w", scheduled.Index, err)
+			return fmt.Errorf("event %d: %w", index, err)
 		}
 		for i := range params.zones {
 			params.zones[i].Brightness = p.scaleBrightness(params.zones[i].Brightness)
@@ -184,14 +195,14 @@ func (p *Player) execute(scheduled scheduler.Event) error {
 	case "set_matrix_colors":
 		params, err := matrixColorParams(event.Params)
 		if err != nil {
-			return fmt.Errorf("event %d: %w", scheduled.Index, err)
+			return fmt.Errorf("event %d: %w", index, err)
 		}
 		for i := range params.pixels {
 			params.pixels[i].Brightness = p.scaleBrightness(params.pixels[i].Brightness)
 		}
 		return p.controller.SetMatrixColors(event.Target, params.pixels, params.width, params.height, params.durationMS)
 	default:
-		return fmt.Errorf("event %d: unsupported action %q", scheduled.Index, event.Action)
+		return fmt.Errorf("event %d: unsupported action %q", index, event.Action)
 	}
 }
 
