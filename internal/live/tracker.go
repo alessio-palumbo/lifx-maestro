@@ -36,6 +36,7 @@ func DefaultTrackerConfig() TrackerConfig {
 type StateTracker struct {
 	config       TrackerConfig
 	noiseFloorDB float64
+	bandFloorDB  [3]float64
 	fluxBaseline float64
 	energy       float64
 	low          float64
@@ -51,7 +52,11 @@ func NewStateTracker(config TrackerConfig) *StateTracker {
 	if config.EnergyRangeDB <= 0 {
 		config = DefaultTrackerConfig()
 	}
-	return &StateTracker{config: config, noiseFloorDB: config.InitialNoiseFloorDB}
+	return &StateTracker{
+		config:       config,
+		noiseFloorDB: config.InitialNoiseFloorDB,
+		bandFloorDB:  [3]float64{config.InitialNoiseFloorDB, config.InitialNoiseFloorDB, config.InitialNoiseFloorDB},
+	}
 }
 
 func (t *StateTracker) Update(features Features) State {
@@ -64,19 +69,16 @@ func (t *StateTracker) Update(features Features) State {
 
 	// Quiet observations can lower the floor quickly. Louder observations only
 	// raise it very slowly so a clap or musical accent cannot redefine silence.
-	noiseRate := t.config.NoiseRise
-	if features.RMSDB < t.noiseFloorDB {
-		noiseRate = t.config.NoiseFall
-	} else if transient {
-		noiseRate = 0
-	}
-	t.noiseFloorDB = lerp(t.noiseFloorDB, features.RMSDB, noiseRate)
+	t.noiseFloorDB = t.updateFloor(t.noiseFloorDB, features.RMSDB, transient)
+	t.bandFloorDB[0] = t.updateFloor(t.bandFloorDB[0], features.LowDB, transient)
+	t.bandFloorDB[1] = t.updateFloor(t.bandFloorDB[1], features.MidDB, transient)
+	t.bandFloorDB[2] = t.updateFloor(t.bandFloorDB[2], features.HighDB, transient)
 
 	rawEnergy := gatedLevel(features.RMSDB, t.noiseFloorDB, t.config)
 	t.energy = smooth(t.energy, rawEnergy, t.config.Attack, t.config.Release)
-	t.low = smooth(t.low, gatedLevel(features.LowDB, t.noiseFloorDB, t.config), t.config.Attack, t.config.Release)
-	t.mid = smooth(t.mid, gatedLevel(features.MidDB, t.noiseFloorDB, t.config), t.config.Attack, t.config.Release)
-	t.high = smooth(t.high, gatedLevel(features.HighDB, t.noiseFloorDB, t.config), t.config.Attack, t.config.Release)
+	t.low = smooth(t.low, gatedLevel(features.LowDB, t.bandFloorDB[0], t.config), t.config.Attack, t.config.Release)
+	t.mid = smooth(t.mid, gatedLevel(features.MidDB, t.bandFloorDB[1], t.config), t.config.Attack, t.config.Release)
+	t.high = smooth(t.high, gatedLevel(features.HighDB, t.bandFloorDB[2], t.config), t.config.Attack, t.config.Release)
 
 	onset := rawEnergy > 0 && features.OnsetStrength >= onsetThreshold && features.At-t.lastOnset >= t.config.OnsetCooldown
 	if onset {
@@ -112,6 +114,16 @@ func (t *StateTracker) Update(features Features) State {
 		TempoConfidence: clamp(features.TempoConfidence, 0, 1),
 		Active:          t.energy >= 0.015,
 	}
+}
+
+func (t *StateTracker) updateFloor(current, observed float64, transient bool) float64 {
+	rate := t.config.NoiseRise
+	if observed < current {
+		rate = t.config.NoiseFall
+	} else if transient {
+		rate = 0
+	}
+	return lerp(current, observed, rate)
 }
 
 func gatedLevel(valueDB, noiseFloorDB float64, config TrackerConfig) float64 {

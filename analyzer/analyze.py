@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import json
+import struct
 import sys
+from collections import deque
 
 import librosa
 import numpy as np
@@ -8,8 +10,11 @@ import soundfile as sf
 
 
 def main():
+    if len(sys.argv) == 2 and sys.argv[1] == "--live":
+        return live_main()
+
     if len(sys.argv) != 2:
-        print("usage: analyze.py <audio-file>", file=sys.stderr)
+        print("usage: analyze.py <audio-file> | --live", file=sys.stderr)
         return 2
 
     path = sys.argv[1]
@@ -37,6 +42,132 @@ def main():
     }
     print(json.dumps(result, separators=(",", ":")))
     return 0
+
+
+LIVE_HEADER = struct.Struct("<IIq")
+
+
+def live_main():
+    analyzer = LiveWindowAnalyzer()
+    source = sys.stdin.buffer
+    while True:
+        header = read_exact(source, LIVE_HEADER.size)
+        if not header:
+            return 0
+        sample_rate, sample_count, end_ns = LIVE_HEADER.unpack(header)
+        payload = read_exact(source, sample_count * 4)
+        if payload is None:
+            raise EOFError("incomplete live PCM window")
+        samples = np.frombuffer(payload, dtype="<f4")
+        result = analyzer.analyze(samples, sample_rate, end_ns / 1_000_000_000.0)
+        print(json.dumps(result, separators=(",", ":")), flush=True)
+
+
+def read_exact(source, size):
+    data = bytearray()
+    while len(data) < size:
+        chunk = source.read(size - len(data))
+        if not chunk:
+            return None if data else b""
+        data.extend(chunk)
+    return bytes(data)
+
+
+class LiveWindowAnalyzer:
+    """Stateful, causal analysis for overlapping microphone windows."""
+
+    def __init__(self):
+        self.previous_magnitude = None
+        self.flux_history = deque(maxlen=160)
+        self.transient_times = deque(maxlen=32)
+        self.tempo = 0.0
+
+    def analyze(self, samples, sample_rate, at_seconds):
+        if sample_rate <= 0 or len(samples) == 0:
+            return self.empty_result(at_seconds)
+
+        window = np.hanning(len(samples))
+        windowed = samples * window
+        magnitude = np.abs(np.fft.rfft(windowed))
+        frequencies = np.fft.rfftfreq(len(samples), d=1.0 / sample_rate)
+        window_gain = float(np.sqrt(np.mean(np.square(window))))
+        rms = float(np.sqrt(np.mean(np.square(samples, dtype=np.float64))))
+
+        flux = 0.0
+        if self.previous_magnitude is not None and len(self.previous_magnitude) == len(magnitude):
+            positive = np.maximum(magnitude - self.previous_magnitude, 0.0)
+            flux = float(np.sum(positive) / max(np.sum(self.previous_magnitude), 1e-12))
+        self.previous_magnitude = magnitude
+
+        history = np.asarray(self.flux_history, dtype=np.float64)
+        threshold = max(0.025, float(np.median(history) + np.std(history) * 2.2)) if len(history) >= 8 else 0.08
+        transient = flux >= threshold
+        self.flux_history.append(flux)
+        if transient and (not self.transient_times or at_seconds - self.transient_times[-1] >= 0.12):
+            self.transient_times.append(at_seconds)
+
+        tempo, confidence = self.estimate_tempo()
+        if tempo > 0:
+            self.tempo = tempo if self.tempo <= 0 else self.tempo * 0.82 + tempo * 0.18
+
+        return {
+            "at_ms": int(round(at_seconds * 1000)),
+            "rms_db": amplitude_db(rms),
+            "low_db": band_db(magnitude, frequencies, 20, 250, window_gain),
+            "mid_db": band_db(magnitude, frequencies, 250, 4000, window_gain),
+            "high_db": band_db(magnitude, frequencies, 4000, min(12000, sample_rate / 2), window_gain),
+            "onset_strength": round(flux, 6),
+            "tempo_bpm": round(self.tempo, 3),
+            "tempo_confidence": round(confidence, 4),
+            "beat": bool(transient and confidence >= 0.35),
+        }
+
+    def estimate_tempo(self):
+        if len(self.transient_times) < 4:
+            return 0.0, 0.0
+        intervals = np.diff(np.asarray(self.transient_times, dtype=np.float64))
+        folded = []
+        for interval in intervals:
+            while interval < 0.25:
+                interval *= 2
+            while interval > 1.5:
+                interval /= 2
+            if 0.25 <= interval <= 1.5:
+                folded.append(interval)
+        if len(folded) < 3:
+            return 0.0, 0.0
+        median = float(np.median(folded))
+        deviations = np.abs(np.asarray(folded) - median)
+        confidence = float(np.mean(deviations <= max(0.045, median * 0.12)))
+        return 60.0 / median, confidence
+
+    def empty_result(self, at_seconds):
+        return {
+            "at_ms": int(round(at_seconds * 1000)),
+            "rms_db": -120.0,
+            "low_db": -120.0,
+            "mid_db": -120.0,
+            "high_db": -120.0,
+            "onset_strength": 0.0,
+            "tempo_bpm": self.tempo,
+            "tempo_confidence": 0.0,
+            "beat": False,
+        }
+
+
+def amplitude_db(value):
+    return round(20.0 * np.log10(max(float(value), 1e-6)), 4)
+
+
+def band_db(magnitude, frequencies, low_hz, high_hz, window_gain):
+    mask = (frequencies >= low_hz) & (frequencies < high_hz)
+    if not np.any(mask):
+        return -120.0
+    # Parseval scaling keeps a tone's band amplitude comparable with full-window
+    # RMS. The Go tracker still learns an independent ambient floor per band.
+    sample_count = max((len(magnitude) - 1) * 2, 1)
+    mean_square = 2.0 * float(np.sum(np.square(magnitude[mask], dtype=np.float64))) / (sample_count * sample_count)
+    return amplitude_db(np.sqrt(mean_square) / max(window_gain, 1e-6))
 
 
 def normalize(values):
