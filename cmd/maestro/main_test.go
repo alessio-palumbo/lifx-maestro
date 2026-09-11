@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 func TestCommandTreeIncludesExpectedCommands(t *testing.T) {
 	cmd := newCommand()
@@ -9,7 +12,7 @@ func TestCommandTreeIncludesExpectedCommands(t *testing.T) {
 		got[subcommand.Name] = true
 	}
 
-	for _, name := range []string{"analyze", "devices", "generate", "perform", "play", "styles"} {
+	for _, name := range []string{"analyze", "devices", "generate", "live", "perform", "play", "styles"} {
 		if !got[name] {
 			t.Fatalf("missing command %q", name)
 		}
@@ -67,5 +70,19 @@ func TestNewAnalyzerHonoursPythonOverride(t *testing.T) {
 	}
 	if analyzer.ScriptPath == "" {
 		t.Fatal("python override needs an analyzer script path")
+	}
+}
+
+func TestNewAnalyzerResolvesRelativePythonOverride(t *testing.T) {
+	cmd := analyzeCommand()
+	if err := cmd.Set("python", "analyzer/.venv/bin/python"); err != nil {
+		t.Fatal(err)
+	}
+	analyzer, err := newAnalyzer(cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(analyzer.PythonPath) {
+		t.Fatalf("Python path = %q, want absolute", analyzer.PythonPath)
 	}
 }

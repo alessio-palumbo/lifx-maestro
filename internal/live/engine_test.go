@@ -2,6 +2,7 @@ package live
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 
 type chunkSource struct {
 	chunks []PCMChunk
+	err    error
 }
 
 func (s chunkSource) Name() string { return "test PCM" }
@@ -24,7 +26,16 @@ func (s chunkSource) Run(ctx context.Context, output chan<- PCMChunk) error {
 		case output <- chunk:
 		}
 	}
-	return nil
+	return s.err
+}
+
+type waitingSource struct{}
+
+func (waitingSource) Name() string { return "waiting" }
+
+func (waitingSource) Run(ctx context.Context, _ chan<- PCMChunk) error {
+	<-ctx.Done()
+	return ctx.Err()
 }
 
 type windowAnalyzer struct {
@@ -122,5 +133,57 @@ func TestEngineRejectsHopLongerThanWindow(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected invalid window configuration error")
+	}
+}
+
+func TestEngineReturnsSourceErrorAfterBufferedAudioDrains(t *testing.T) {
+	wantErr := errors.New("capture failed")
+	generator, err := NewGenerator(GeneratorConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine, err := NewEngine(EngineConfig{
+		Source:    chunkSource{err: wantErr},
+		Analyzer:  &windowAnalyzer{},
+		Generator: generator,
+		Sink:      &collectingSink{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Run(context.Background()); !errors.Is(err, wantErr) {
+		t.Fatalf("Run error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestEngineCancellationStopsAllComponents(t *testing.T) {
+	analyzer := &windowAnalyzer{}
+	generator, err := NewGenerator(GeneratorConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine, err := NewEngine(EngineConfig{
+		Source:    waitingSource{},
+		Analyzer:  analyzer,
+		Generator: generator,
+		Sink:      &collectingSink{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- engine.Run(ctx) }()
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("engine did not stop after cancellation")
+	}
+	if !analyzer.closed {
+		t.Fatal("analyzer was not closed after cancellation")
 	}
 }

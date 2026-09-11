@@ -66,23 +66,28 @@ func (e *Engine) Run(ctx context.Context) error {
 
 	chunks := make(chan PCMChunk, 8)
 	eventBatches := make(chan []timeline.Event, 1)
-	errs := make(chan error, 2)
+	sourceDone := make(chan error, 1)
+	sinkDone := make(chan error, 1)
 	var wg sync.WaitGroup
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		defer close(chunks)
-		if err := e.config.Source.Run(ctx, chunks); err != nil && !errors.Is(err, context.Canceled) {
-			errs <- fmt.Errorf("capture audio: %w", err)
+		err := e.config.Source.Run(ctx, chunks)
+		if errors.Is(err, context.Canceled) {
+			err = nil
 		}
+		sourceDone <- err
 	}()
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := e.config.Sink.Run(ctx, eventBatches); err != nil && !errors.Is(err, context.Canceled) {
-			errs <- fmt.Errorf("dispatch live events: %w", err)
+		err := e.config.Sink.Run(ctx, eventBatches)
+		if errors.Is(err, context.Canceled) {
+			err = nil
 		}
+		sinkDone <- err
 	}()
 
 	var buffer *WindowBuffer
@@ -92,11 +97,16 @@ loop:
 		select {
 		case <-ctx.Done():
 			break loop
-		case err := <-errs:
-			runErr = err
+		case err := <-sinkDone:
+			if err != nil {
+				runErr = fmt.Errorf("dispatch live events: %w", err)
+			}
 			break loop
 		case chunk, ok := <-chunks:
 			if !ok {
+				if err := <-sourceDone; err != nil {
+					runErr = fmt.Errorf("capture audio: %w", err)
+				}
 				break loop
 			}
 			if buffer == nil {

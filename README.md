@@ -10,6 +10,7 @@ The current implementation can:
 - generate deterministic timeline JSON
 - play timelines against LIFX LAN devices
 - perform audio and lighting together from the same audio clock
+- react continuously to microphone audio through the CLI-first Maestro Live mode
 - discover device capabilities for single-zone, multizone, and matrix devices
 - render generated effects into whole-device, zone, or matrix timeline actions
 - run in dry-run mode without touching real lights
@@ -113,6 +114,12 @@ Analyze, generate, play audio, and control lights in one command:
 
 ```bash
 go run ./cmd/maestro perform samples/song.mp3 --style cinematic --target all
+```
+
+React to music or instruments heard by the default microphone:
+
+```bash
+go run ./cmd/maestro live --target "Living Room" --verbose
 ```
 
 Test the full perform flow without touching real lights:
@@ -236,6 +243,91 @@ Desk Lamp          single_zone color
 Light Strip        multi_zone  16 zones
 Tile               matrix      8x8 x2
 ```
+
+### `maestro live`
+
+Continuously analyze microphone audio and drive selected lights without recording
+or creating a timeline file:
+
+```bash
+go run ./cmd/maestro live --target all
+```
+
+Options:
+
+- `--input string`: microphone name or ID. The system default is used when omitted
+- `--list-inputs`: list available microphone inputs and exit
+- `--target string`: device label, group, location, serial, or comma-separated selectors. Default: `all`
+- `--style string`: generation style. Default: `synthwave`
+- `--intensity string`: `auto`, `calm`, `balanced`, or `energetic`. Default: `auto`
+- `--dry-run`: analyze real microphone input but send events to the mock controller
+- `--verbose`: print rate-limited energy, frequency-band, noise-floor, tempo, and accent diagnostics
+- `--python string`: Python executable to use instead of the bundled analyzer
+
+Examples:
+
+```bash
+go run ./cmd/maestro live --list-inputs
+go run ./cmd/maestro live --input "MacBook Pro Microphone" --target tv,desk
+go run ./cmd/maestro live --target "Living Room" --style warm --intensity calm
+go run ./cmd/maestro live --dry-run --verbose
+```
+
+Live resolves group and location selectors to individual discovered devices before
+rendering. LIFX Switch devices are excluded. The selected
+lights are powered on after their current state is captured, and their single-zone,
+multizone, or matrix state is restored when Live exits.
+
+#### Live architecture
+
+The CLI only assembles the reusable components in `internal/live`:
+
+```text
+Microphone AudioSource
+  -> overlapping PCM windows
+  -> persistent streaming analyzer
+  -> adaptive LiveState tracker
+  -> deterministic Live generator
+  -> capability-aware renderer
+  -> per-target coalescing dispatcher
+  -> existing DeviceController
+```
+
+Capture uses 16 kHz mono float PCM in approximately 20 ms callbacks. Audio is held
+only in memory. Analysis uses a 500 ms rolling window every 100 ms, so adjacent
+windows overlap by 400 ms and transients near chunk boundaries are retained. The
+first full analysis is available after roughly 500 ms. Capture never waits for
+analysis or LAN writes: bounded channels drop stale audio or lighting states under
+load instead of accumulating latency.
+
+The long-lived Python process calculates RMS, low/mid/high band energy, spectral
+flux, and a causal rolling tempo estimate. Go maintains the evolving noise floor,
+onset baseline, smoothed energy, and generator decisions. Each frequency band has
+its own adaptive floor. Quiet observations lower a floor relatively quickly;
+louder observations raise it slowly, while detected transients do not raise it at
+all. This lets a clap react immediately without teaching Live that the clap is the
+new room baseline.
+
+Live deliberately does not use the static timeline scheduler because microphone
+audio has no known future clock. It does reuse Maestro palettes, styles, effect
+intents, spatial rendering, device execution, brightness rules, discovery, and
+state restoration. Per-target one-slot queues preserve ordering for each light but
+replace pending stale frames when a device is slower than the incoming analysis.
+
+Current latency consists of the 500 ms causal analysis window startup, up to one
+100 ms analysis hop during steady operation, analyzer processing time, microphone
+and speaker acoustic latency, and LIFX LAN delivery. Tempo needs several accents to
+stabilize and can be unreliable on non-periodic material. `auto` has no complete
+track profile in Live, so it follows measured short-term energy; use `--intensity`
+and `--style` for the main user-facing tuning controls. Developer tuning constants
+are `DefaultAnalysisWindow`, `DefaultAnalysisHop`, `DefaultCapturePeriod`, and
+`DefaultTrackerConfig`.
+
+The current analyzer implementation depends on Python, NumPy, and Librosa through
+the same development or bundled executable used by offline analysis. Neither the
+`AudioSource` nor `Analyzer` interface depends on Python, so a lighter Go analyzer
+can replace it later for headless hardware without changing generation or device
+execution.
 
 ### `maestro play`
 
