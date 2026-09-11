@@ -103,7 +103,8 @@ class LiveWindowAnalyzer:
         threshold = max(0.025, float(np.median(history) + np.std(history) * 2.2)) if len(history) >= 8 else 0.08
         transient = flux >= threshold
         self.flux_history.append(flux)
-        if transient and (not self.transient_times or at_seconds - self.transient_times[-1] >= 0.12):
+        accepted_transient = transient and (not self.transient_times or at_seconds - self.transient_times[-1] >= 0.12)
+        if accepted_transient:
             self.transient_times.append(at_seconds)
 
         tempo, confidence = self.estimate_tempo()
@@ -119,7 +120,7 @@ class LiveWindowAnalyzer:
             "onset_strength": round(flux, 6),
             "tempo_bpm": round(self.tempo, 3),
             "tempo_confidence": round(confidence, 4),
-            "beat": bool(transient and confidence >= 0.35),
+            "beat": bool(accepted_transient and confidence >= 0.35),
         }
 
     def estimate_tempo(self):

@@ -29,7 +29,7 @@ func DefaultTrackerConfig() TrackerConfig {
 		NoiseFall:           0.08,
 		OnsetRatio:          2.4,
 		OnsetMinimum:        0.025,
-		OnsetCooldown:       100 * time.Millisecond,
+		OnsetCooldown:       160 * time.Millisecond,
 	}
 }
 
