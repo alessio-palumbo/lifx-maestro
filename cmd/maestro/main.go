@@ -122,7 +122,7 @@ func liveCommand() *cli.Command {
 			dispatcher := livemode.NewDispatcher(player, func(event timeline.Event, err error) {
 				fmt.Fprintf(os.Stderr, "maestro: live event target=%s: %v\n", event.Target, err)
 			})
-			observer := newLiveDiagnostics(cmd.Bool("verbose"), source, cmd.String("target"), os.Stdout)
+			observer := newLiveDiagnostics(cmd.Bool("verbose"), source, cmd.String("target"), dispatcher, os.Stdout)
 			engine, err := livemode.NewEngine(livemode.EngineConfig{
 				Source:    source,
 				Analyzer:  analyzer,
@@ -200,19 +200,30 @@ func powerOnDevices(controller devices.DeviceController, infos []devices.DeviceI
 }
 
 type liveDiagnostics struct {
-	enabled bool
-	source  livemode.AudioSource
-	target  string
-	out     io.Writer
-	last    time.Duration
-	printed bool
+	source        livemode.AudioSource
+	target        string
+	dispatcher    *livemode.Dispatcher
+	out           io.Writer
+	last          time.Duration
+	lastDispatch  livemode.DispatcherStats
+	printed       bool
+	accents       int
+	onsets        int
+	beats         int
+	generated     int
+	droppedEvents int
 }
 
-func newLiveDiagnostics(enabled bool, source livemode.AudioSource, target string, out io.Writer) livemode.Observer {
+func newLiveDiagnostics(enabled bool, source livemode.AudioSource, target string, dispatcher *livemode.Dispatcher, out io.Writer) livemode.Observer {
 	if !enabled {
 		return nil
 	}
-	return &liveDiagnostics{enabled: true, source: source, target: target, out: out}
+	return &liveDiagnostics{source: source, target: target, dispatcher: dispatcher, out: out}
+}
+
+func (d *liveDiagnostics) ObserveOutput(activity livemode.OutputActivity) {
+	d.generated += activity.GeneratedEvents
+	d.droppedEvents += activity.DroppedEvents
 }
 
 func (d *liveDiagnostics) Observe(state livemode.State) {
@@ -220,16 +231,38 @@ func (d *liveDiagnostics) Observe(state livemode.State) {
 		fmt.Fprintf(d.out, "input=%s target=%s\n", d.source.Name(), d.target)
 		d.printed = true
 	}
+	if state.Active && (state.Beat || state.Onset) {
+		d.accents++
+		if state.Onset {
+			d.onsets++
+		}
+		if state.Beat {
+			d.beats++
+		}
+	}
 	if state.At-d.last < 500*time.Millisecond {
 		return
 	}
 	d.last = state.At
-	beat := ""
-	if state.Beat || state.Onset {
-		beat = " *"
+	gate := "closed"
+	if state.Active {
+		gate = "open"
 	}
-	fmt.Fprintf(d.out, "[live %s] noise=%5.1fdB energy=%.2f low=%.2f mid=%.2f high=%.2f tempo=%5.1f%s\n",
-		playback.FormatOffset(state.At), state.NoiseFloorDB, state.Energy, state.Low, state.Mid, state.High, state.TempoBPM, beat)
+	dispatch := livemode.DispatcherStats{}
+	if d.dispatcher != nil {
+		dispatch = d.dispatcher.Stats()
+	}
+	sent := dispatch.Sent - d.lastDispatch.Sent
+	replaced := dispatch.Replaced - d.lastDispatch.Replaced + uint64(d.droppedEvents)
+	errors := dispatch.Errors - d.lastDispatch.Errors
+	fmt.Fprintf(d.out, "[live %s] level=%5.1fdB floor=%5.1fdB margin=%4.1fdB energy=%.2f low=%.2f mid=%.2f high=%.2f tempo=%5.1f confidence=%.2f gate=%s accents=%d(onset=%d beat=%d) generated=%d sent=%d replaced=%d errors=%d\n",
+		playback.FormatOffset(state.At), state.InputDB, state.NoiseFloorDB, state.MarginDB, state.Energy, state.Low, state.Mid, state.High, state.TempoBPM, state.TempoConfidence, gate, d.accents, d.onsets, d.beats, d.generated, sent, replaced, errors)
+	d.lastDispatch = dispatch
+	d.accents = 0
+	d.onsets = 0
+	d.beats = 0
+	d.generated = 0
+	d.droppedEvents = 0
 }
 
 func devicesCommand() *cli.Command {

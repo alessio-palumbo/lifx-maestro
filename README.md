@@ -261,7 +261,7 @@ Options:
 - `--style string`: generation style. Default: `synthwave`
 - `--intensity string`: `auto`, `calm`, `balanced`, or `energetic`. Default: `auto`
 - `--dry-run`: analyze real microphone input but send events to the mock controller
-- `--verbose`: print rate-limited energy, frequency-band, noise-floor, tempo, and accent diagnostics
+- `--verbose`: print rate-limited input level, noise margin, energy, frequency-band, tempo-confidence, gate, and accent diagnostics
 - `--python string`: Python executable to use instead of the bundled analyzer
 
 Examples:
@@ -303,10 +303,28 @@ load instead of accumulating latency.
 The long-lived Python process calculates RMS, low/mid/high band energy, spectral
 flux, and a causal rolling tempo estimate. Go maintains the evolving noise floor,
 onset baseline, smoothed energy, and generator decisions. Each frequency band has
-its own adaptive floor. Quiet observations lower a floor relatively quickly;
-louder observations raise it slowly, while detected transients do not raise it at
-all. This lets a clap react immediately without teaching Live that the clap is the
-new room baseline.
+its own adaptive floor. Steady ambience is calibrated during the first three
+seconds. After that, quiet observations can lower a floor and near-baseline noise
+can raise it slowly, but clearly active audio and detected transients freeze upward
+adaptation. This prevents sustained music from gradually teaching Live that the
+song itself is background noise. A smoothed overall energy of `0.015` opens the
+generation gate; individual low, mid, or high bands may be zero without closing it.
+Each frequency band also maintains a slowly moving upper ceiling, preventing one
+band from remaining pinned at `1.00` throughout a loud section.
+
+Tempo is estimated from periodicity in the rolling onset-strength envelope, so
+melodic attacks and rhythmic subdivisions do not each become an assumed beat.
+Candidates need at least `0.45` confidence before they can update the stable
+tempo. Half-time and double-time candidates are folded into a practical
+`70-140 BPM` lighting range, and confidence decays when no reliable candidates
+arrive. Once acquired,
+the clock continues through ambiguous active sections until a reliable estimate
+retunes it; confidence therefore describes the freshness of the estimate rather
+than switching rhythmic output off. Verbose accent and output counts cover the
+whole 500 ms log interval rather than only the final analysis sample. `generated`
+counts rendered device events, `sent` counts completed device writes, `replaced`
+counts stale events discarded to protect latency, and `errors` counts failed
+writes.
 
 Live deliberately does not use the static timeline scheduler because microphone
 audio has no known future clock. It does reuse Maestro palettes, styles, effect
@@ -322,6 +340,19 @@ track profile in Live, so it follows measured short-term energy; use `--intensit
 and `--style` for the main user-facing tuning controls. Developer tuning constants
 are `DefaultAnalysisWindow`, `DefaultAnalysisHop`, `DefaultCapturePeriod`, and
 `DefaultTrackerConfig`.
+
+For repeatable analyzer diagnostics, compare rolling Live output with Librosa's
+full-track beat analysis using an arbitrary local audio file:
+
+```bash
+analyzer/.venv/bin/python scripts/evaluate-live.py samples/song.mp3
+```
+
+The report shows stable-clock coverage, raw beat-anchor recall and precision,
+predicted clock-beat accuracy, and the longest clock-beat gap in each 10-second
+bucket. Live's causal result is not expected to match an offline analysis exactly;
+the report is primarily useful for finding sections where tempo tracking or
+rhythmic output vanishes.
 
 The current analyzer implementation depends on Python, NumPy, and Librosa through
 the same development or bundled executable used by offline analysis. Neither the

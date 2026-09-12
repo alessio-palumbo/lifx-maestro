@@ -25,6 +25,8 @@ type Generator struct {
 	ambientHop  time.Duration
 	lastAmbient time.Duration
 	beatIndex   int
+	motion      float64
+	lastStateAt time.Duration
 }
 
 func NewGenerator(config GeneratorConfig) (*Generator, error) {
@@ -46,6 +48,7 @@ func NewGenerator(config GeneratorConfig) (*Generator, error) {
 }
 
 func (g *Generator) Generate(state State) []timeline.Event {
+	motion := g.advanceMotion(state)
 	if !state.Active || len(g.devices) == 0 {
 		return nil
 	}
@@ -76,6 +79,12 @@ func (g *Generator) Generate(state State) []timeline.Event {
 
 	var events []timeline.Event
 	for index, device := range g.devices {
+		spatialIndex := effectIndex
+		spatialPhase := 0.0
+		if device.Capabilities.Kind == devices.DeviceKindMultiZone || device.Capabilities.Kind == devices.DeviceKindMatrix {
+			spatialIndex = int(motion)
+			spatialPhase = motion - float64(spatialIndex)
+		}
 		events = append(events, rendering.Render(rendering.EffectIntent{
 			Kind:        kind,
 			TimeMS:      state.At.Milliseconds(),
@@ -84,8 +93,8 @@ func (g *Generator) Generate(state State) []timeline.Event {
 			Palette:     g.style.Palette,
 			Brightness:  brightness,
 			DurationMS:  duration.Milliseconds(),
-			BeatIndex:   effectIndex + index,
-			Phase:       0,
+			BeatIndex:   spatialIndex + index,
+			Phase:       spatialPhase,
 			Section:     "live",
 			DeviceIndex: index,
 			DeviceTotal: len(g.devices),
@@ -97,6 +106,24 @@ func (g *Generator) Generate(state State) []timeline.Event {
 		}, device)...)
 	}
 	return events
+}
+
+func (g *Generator) advanceMotion(state State) float64 {
+	if g.lastStateAt == 0 || state.At <= g.lastStateAt {
+		g.lastStateAt = state.At
+		return g.motion
+	}
+	delta := state.At - g.lastStateAt
+	g.lastStateAt = state.At
+	if delta > time.Second {
+		delta = time.Second
+	}
+	bpm := state.TempoBPM
+	if bpm < 40 || bpm > 240 {
+		bpm = 90
+	}
+	g.motion += delta.Seconds() * bpm / 60
+	return g.motion
 }
 
 func liveStyle(style styles.Style, intensity generation.DynamicsOverride) styles.Style {

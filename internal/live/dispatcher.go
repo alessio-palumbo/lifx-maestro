@@ -3,6 +3,7 @@ package live
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 
 	"lifx-maestro/internal/timeline"
 )
@@ -19,6 +20,15 @@ type DispatchErrorFunc func(event timeline.Event, err error)
 type Dispatcher struct {
 	executor ImmediateExecutor
 	onError  DispatchErrorFunc
+	sent     atomic.Uint64
+	replaced atomic.Uint64
+	errors   atomic.Uint64
+}
+
+type DispatcherStats struct {
+	Sent     uint64
+	Replaced uint64
+	Errors   uint64
 }
 
 func NewDispatcher(executor ImmediateExecutor, onError DispatchErrorFunc) *Dispatcher {
@@ -51,7 +61,7 @@ func (d *Dispatcher) Run(ctx context.Context, input <-chan []timeline.Event) err
 					wg.Add(1)
 					go d.runTarget(ctx, queue, &wg)
 				}
-				enqueueLatest(queue, event)
+				d.enqueueLatest(queue, event)
 			}
 		}
 	}
@@ -68,15 +78,20 @@ func (d *Dispatcher) runTarget(ctx context.Context, queue <-chan timeline.Event,
 			if !ok {
 				return
 			}
-			if err := d.executor.ExecuteEvent(index, event); err != nil && d.onError != nil {
-				d.onError(event, err)
+			if err := d.executor.ExecuteEvent(index, event); err != nil {
+				d.errors.Add(1)
+				if d.onError != nil {
+					d.onError(event, err)
+				}
+			} else {
+				d.sent.Add(1)
 			}
 			index++
 		}
 	}
 }
 
-func enqueueLatest(queue chan timeline.Event, event timeline.Event) {
+func (d *Dispatcher) enqueueLatest(queue chan timeline.Event, event timeline.Event) {
 	select {
 	case queue <- event:
 		return
@@ -85,10 +100,19 @@ func enqueueLatest(queue chan timeline.Event, event timeline.Event) {
 
 	select {
 	case <-queue:
+		d.replaced.Add(1)
 	default:
 	}
 	select {
 	case queue <- event:
 	default:
+	}
+}
+
+func (d *Dispatcher) Stats() DispatcherStats {
+	return DispatcherStats{
+		Sent:     d.sent.Load(),
+		Replaced: d.replaced.Load(),
+		Errors:   d.errors.Load(),
 	}
 }

@@ -1,6 +1,7 @@
 package live
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 	"time"
@@ -53,6 +54,24 @@ func TestGeneratorIgnoresGatedAudio(t *testing.T) {
 	}
 }
 
+func TestGeneratorDoesNotRequireEveryFrequencyBand(t *testing.T) {
+	generator, err := NewGenerator(GeneratorConfig{
+		Devices: []devices.DeviceInfo{{ID: "lamp", Capabilities: devices.DeviceCapabilities{Kind: devices.DeviceKindSingleZone}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := generator.Generate(State{
+		At:     500 * time.Millisecond,
+		Active: true,
+		Energy: 0.2,
+		Low:    0.3,
+	})
+	if len(events) == 0 {
+		t.Fatal("an active state with empty mid/high bands produced no events")
+	}
+}
+
 func TestGeneratorUsesCapabilityAwareRendering(t *testing.T) {
 	generator, err := NewGenerator(GeneratorConfig{
 		Style:     "neon",
@@ -75,5 +94,33 @@ func TestGeneratorUsesCapabilityAwareRendering(t *testing.T) {
 		if !actions[action] {
 			t.Fatalf("missing %s from %v", action, actions)
 		}
+	}
+}
+
+func TestGeneratorAdvancesAmbientMultiZoneFrameWithoutAccents(t *testing.T) {
+	generator, err := NewGenerator(GeneratorConfig{
+		Style: "synthwave",
+		Devices: []devices.DeviceInfo{{
+			ID: "strip",
+			Capabilities: devices.DeviceCapabilities{
+				Kind:      devices.DeviceKindMultiZone,
+				ZoneCount: 16,
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first := generator.Generate(State{At: 200 * time.Millisecond, Active: true, Energy: 0.4, Mid: 0.5})
+	var latest []timeline.Event
+	for at := 400 * time.Millisecond; at <= 1600*time.Millisecond; at += 200 * time.Millisecond {
+		latest = generator.Generate(State{At: at, Active: true, Energy: 0.4, Mid: 0.5})
+	}
+	if len(first) != 1 || len(latest) != 1 {
+		t.Fatalf("ambient events = %d then %d, want one spatial event each", len(first), len(latest))
+	}
+	if bytes.Equal(first[0].Params, latest[0].Params) {
+		t.Fatal("ambient multizone frame did not move while audio remained active")
 	}
 }

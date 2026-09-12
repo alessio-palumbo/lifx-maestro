@@ -34,7 +34,9 @@ type Features struct {
 
 type State struct {
 	At              time.Duration
+	InputDB         float64
 	NoiseFloorDB    float64
+	MarginDB        float64
 	Energy          float64
 	Low             float64
 	Mid             float64
@@ -63,6 +65,16 @@ type EventSink interface {
 
 type Observer interface {
 	Observe(State)
+}
+
+type OutputActivity struct {
+	At              time.Duration
+	GeneratedEvents int
+	DroppedEvents   int
+}
+
+type OutputObserver interface {
+	ObserveOutput(OutputActivity)
 }
 
 type ObserverFunc func(State)

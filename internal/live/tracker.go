@@ -34,51 +34,85 @@ func DefaultTrackerConfig() TrackerConfig {
 }
 
 type StateTracker struct {
-	config       TrackerConfig
-	noiseFloorDB float64
-	bandFloorDB  [3]float64
-	fluxBaseline float64
-	energy       float64
-	low          float64
-	mid          float64
-	high         float64
-	lastEnergy   float64
-	lastOnset    time.Duration
-	tempo        float64
-	initialized  bool
+	config          TrackerConfig
+	noiseFloorDB    float64
+	bandFloorDB     [3]float64
+	bandCeilingDB   [3]float64
+	fluxBaseline    float64
+	energy          float64
+	low             float64
+	mid             float64
+	high            float64
+	lastEnergy      float64
+	lastOnset       time.Duration
+	tempo           float64
+	tempoConfidence float64
+	nextBeatAt      time.Duration
+	initialized     bool
+	startedAt       time.Duration
+	signalSeen      bool
 }
+
+const (
+	noiseCalibrationDuration  = 3 * time.Second
+	noiseCalibrationRate      = 0.08
+	noiseTrackingCeiling      = 0.05
+	MinimumActiveEnergy       = 0.015
+	minimumTempoConfidence    = 0.45
+	tempoConfidenceDecay      = 0.985
+	bandCeilingHeadroomDB     = 3.0
+	bandCeilingMinimumRangeDB = 12.0
+	bandCeilingAttack         = 0.35
+	bandCeilingRelease        = 0.002
+)
 
 func NewStateTracker(config TrackerConfig) *StateTracker {
 	if config.EnergyRangeDB <= 0 {
 		config = DefaultTrackerConfig()
 	}
+	ceiling := config.InitialNoiseFloorDB + config.GateAboveNoiseDB + config.EnergyRangeDB
 	return &StateTracker{
-		config:       config,
-		noiseFloorDB: config.InitialNoiseFloorDB,
-		bandFloorDB:  [3]float64{config.InitialNoiseFloorDB, config.InitialNoiseFloorDB, config.InitialNoiseFloorDB},
+		config:        config,
+		noiseFloorDB:  config.InitialNoiseFloorDB,
+		bandFloorDB:   [3]float64{config.InitialNoiseFloorDB, config.InitialNoiseFloorDB, config.InitialNoiseFloorDB},
+		bandCeilingDB: [3]float64{ceiling, ceiling, ceiling},
 	}
 }
 
 func (t *StateTracker) Update(features Features) State {
 	if !t.initialized {
 		t.fluxBaseline = math.Max(features.OnsetStrength, t.config.OnsetMinimum/2)
+		t.startedAt = features.At
 		t.initialized = true
 	}
 	onsetThreshold := math.Max(t.config.OnsetMinimum, t.fluxBaseline*t.config.OnsetRatio)
 	transient := features.OnsetStrength >= onsetThreshold
+	if transient {
+		t.signalSeen = true
+	}
 
 	// Quiet observations can lower the floor quickly. Louder observations only
-	// raise it very slowly so a clap or musical accent cannot redefine silence.
-	t.noiseFloorDB = t.updateFloor(t.noiseFloorDB, features.RMSDB, transient)
-	t.bandFloorDB[0] = t.updateFloor(t.bandFloorDB[0], features.LowDB, transient)
-	t.bandFloorDB[1] = t.updateFloor(t.bandFloorDB[1], features.MidDB, transient)
-	t.bandFloorDB[2] = t.updateFloor(t.bandFloorDB[2], features.HighDB, transient)
-
+	// raise while the input is close to the known baseline. Otherwise sustained
+	// music would eventually be learned as ambient noise and close its own gate.
+	calibrating := !t.signalSeen && features.At-t.startedAt < noiseCalibrationDuration
 	rawEnergy := gatedLevel(features.RMSDB, t.noiseFloorDB, t.config)
+	rawLow := gatedLevel(features.LowDB, t.bandFloorDB[0], t.config)
+	rawMid := gatedLevel(features.MidDB, t.bandFloorDB[1], t.config)
+	rawHigh := gatedLevel(features.HighDB, t.bandFloorDB[2], t.config)
+	t.noiseFloorDB = t.updateFloor(t.noiseFloorDB, features.RMSDB, rawEnergy, transient, calibrating)
+	t.bandFloorDB[0] = t.updateFloor(t.bandFloorDB[0], features.LowDB, rawLow, transient, calibrating)
+	t.bandFloorDB[1] = t.updateFloor(t.bandFloorDB[1], features.MidDB, rawMid, transient, calibrating)
+	t.bandFloorDB[2] = t.updateFloor(t.bandFloorDB[2], features.HighDB, rawHigh, transient, calibrating)
+	t.bandCeilingDB[0] = updateBandCeiling(t.bandCeilingDB[0], features.LowDB, t.bandFloorDB[0], t.config)
+	t.bandCeilingDB[1] = updateBandCeiling(t.bandCeilingDB[1], features.MidDB, t.bandFloorDB[1], t.config)
+	t.bandCeilingDB[2] = updateBandCeiling(t.bandCeilingDB[2], features.HighDB, t.bandFloorDB[2], t.config)
+
+	// Re-evaluate against any baseline adjustment made during quiet calibration.
+	rawEnergy = gatedLevel(features.RMSDB, t.noiseFloorDB, t.config)
 	t.energy = smooth(t.energy, rawEnergy, t.config.Attack, t.config.Release)
-	t.low = smooth(t.low, gatedLevel(features.LowDB, t.bandFloorDB[0], t.config), t.config.Attack, t.config.Release)
-	t.mid = smooth(t.mid, gatedLevel(features.MidDB, t.bandFloorDB[1], t.config), t.config.Attack, t.config.Release)
-	t.high = smooth(t.high, gatedLevel(features.HighDB, t.bandFloorDB[2], t.config), t.config.Attack, t.config.Release)
+	t.low = smooth(t.low, bandLevel(features.LowDB, t.bandFloorDB[0], t.bandCeilingDB[0], t.config), t.config.Attack, t.config.Release)
+	t.mid = smooth(t.mid, bandLevel(features.MidDB, t.bandFloorDB[1], t.bandCeilingDB[1], t.config), t.config.Attack, t.config.Release)
+	t.high = smooth(t.high, bandLevel(features.HighDB, t.bandFloorDB[2], t.bandCeilingDB[2], t.config), t.config.Attack, t.config.Release)
 
 	onset := rawEnergy > 0 && features.OnsetStrength >= onsetThreshold && features.At-t.lastOnset >= t.config.OnsetCooldown
 	if onset {
@@ -90,37 +124,127 @@ func (t *StateTracker) Update(features Features) State {
 	}
 	t.fluxBaseline = lerp(t.fluxBaseline, features.OnsetStrength, fluxRate)
 
-	if features.TempoConfidence > 0.2 && features.TempoBPM >= 40 && features.TempoBPM <= 240 {
+	if features.TempoConfidence >= minimumTempoConfidence && features.TempoBPM >= 40 && features.TempoBPM <= 240 {
+		candidate := stabilizeTempo(features.TempoBPM)
 		if t.tempo == 0 {
-			t.tempo = features.TempoBPM
+			t.tempo = candidate
 		} else {
-			t.tempo = lerp(t.tempo, features.TempoBPM, 0.12)
+			t.tempo = lerp(t.tempo, candidate, 0.12)
 		}
+		if t.tempoConfidence == 0 {
+			t.tempoConfidence = features.TempoConfidence
+		} else {
+			t.tempoConfidence = lerp(t.tempoConfidence, features.TempoConfidence, 0.2)
+		}
+	} else {
+		t.tempoConfidence *= tempoConfidenceDecay
 	}
+	// Confidence controls whether a new estimate may retune the clock. Once a
+	// plausible pulse is established, keep it through ambiguous active sections;
+	// an older clock is less disruptive than dropping rhythmic output entirely.
+	reportedTempo := t.tempo
+	observedBeat := onset || (features.Beat && features.TempoConfidence >= minimumTempoConfidence)
+	beat := t.updateBeatClock(features.At, reportedTempo, observedBeat)
 
 	trend := clamp(t.energy-t.lastEnergy, -1, 1)
 	t.lastEnergy = t.energy
 	return State{
 		At:              features.At,
+		InputDB:         features.RMSDB,
 		NoiseFloorDB:    t.noiseFloorDB,
+		MarginDB:        features.RMSDB - t.noiseFloorDB,
 		Energy:          t.energy,
 		Low:             t.low,
 		Mid:             t.mid,
 		High:            t.high,
 		Trend:           trend,
 		Onset:           onset,
-		Beat:            features.Beat && features.TempoConfidence > 0.2,
-		TempoBPM:        t.tempo,
-		TempoConfidence: clamp(features.TempoConfidence, 0, 1),
-		Active:          t.energy >= 0.015,
+		Beat:            beat,
+		TempoBPM:        reportedTempo,
+		TempoConfidence: clamp(t.tempoConfidence, 0, 1),
+		Active:          t.energy >= MinimumActiveEnergy,
 	}
 }
 
-func (t *StateTracker) updateFloor(current, observed float64, transient bool) float64 {
+func (t *StateTracker) updateBeatClock(at time.Duration, bpm float64, observed bool) bool {
+	if bpm < 40 || bpm > 240 {
+		t.nextBeatAt = 0
+		return false
+	}
+	period := time.Duration(float64(time.Minute) / bpm)
+	if t.nextBeatAt == 0 {
+		anchor := at
+		if t.lastOnset > 0 && at-t.lastOnset <= period {
+			anchor = t.lastOnset
+		}
+		t.nextBeatAt = anchor + period
+		for t.nextBeatAt <= at {
+			t.nextBeatAt += period
+		}
+		return observed
+	}
+
+	// A detected transient close to the expected beat corrects accumulated phase
+	// error. Other transients remain onset accents without resetting the clock.
+	tolerance := period / 4
+	if observed && absDuration(at-t.nextBeatAt) <= tolerance {
+		t.nextBeatAt = at + period
+		return true
+	}
+	if at < t.nextBeatAt {
+		return false
+	}
+	for t.nextBeatAt <= at {
+		t.nextBeatAt += period
+	}
+	return true
+}
+
+func absDuration(value time.Duration) time.Duration {
+	if value < 0 {
+		return -value
+	}
+	return value
+}
+
+func updateBandCeiling(current, observed, floor float64, config TrackerConfig) float64 {
+	minimum := floor + config.GateAboveNoiseDB + bandCeilingMinimumRangeDB
+	target := math.Max(minimum, observed+bandCeilingHeadroomDB)
+	rate := bandCeilingRelease
+	if target > current {
+		rate = bandCeilingAttack
+	}
+	return math.Max(minimum, lerp(current, target, rate))
+}
+
+func bandLevel(value, floor, ceiling float64, config TrackerConfig) float64 {
+	start := floor + config.GateAboveNoiseDB
+	if ceiling <= start {
+		return 0
+	}
+	return clamp((value-start)/(ceiling-start), 0, 1)
+}
+
+func stabilizeTempo(candidate float64) float64 {
+	// Beat tracking is octave-ambiguous. Keep Live's lighting pulse in a useful
+	// movement range instead of allowing an early half-time estimate to make the
+	// show settle at 55-70 BPM.
+	for candidate > 140 {
+		candidate /= 2
+	}
+	for candidate < 70 {
+		candidate *= 2
+	}
+	return candidate
+}
+
+func (t *StateTracker) updateFloor(current, observed, gated float64, transient, calibrating bool) float64 {
 	rate := t.config.NoiseRise
 	if observed < current {
 		rate = t.config.NoiseFall
-	} else if transient {
+	} else if calibrating {
+		rate = noiseCalibrationRate
+	} else if transient || gated > noiseTrackingCeiling {
 		rate = 0
 	}
 	return lerp(current, observed, rate)

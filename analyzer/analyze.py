@@ -78,7 +78,10 @@ class LiveWindowAnalyzer:
 
     def __init__(self):
         self.previous_magnitude = None
-        self.flux_history = deque(maxlen=160)
+        # Eight seconds at the default 100 ms hop balances tempo stability with
+        # adaptation when a new rhythmic section starts.
+        self.flux_history = deque(maxlen=80)
+        self.flux_times = deque(maxlen=80)
         self.transient_times = deque(maxlen=32)
         self.tempo = 0.0
 
@@ -103,6 +106,7 @@ class LiveWindowAnalyzer:
         threshold = max(0.025, float(np.median(history) + np.std(history) * 2.2)) if len(history) >= 8 else 0.08
         transient = flux >= threshold
         self.flux_history.append(flux)
+        self.flux_times.append(at_seconds)
         accepted_transient = transient and (not self.transient_times or at_seconds - self.transient_times[-1] >= 0.12)
         if accepted_transient:
             self.transient_times.append(at_seconds)
@@ -124,23 +128,57 @@ class LiveWindowAnalyzer:
         }
 
     def estimate_tempo(self):
-        if len(self.transient_times) < 4:
+        if len(self.flux_history) < 16 or len(self.flux_times) != len(self.flux_history):
             return 0.0, 0.0
-        intervals = np.diff(np.asarray(self.transient_times, dtype=np.float64))
-        folded = []
-        for interval in intervals:
-            while interval < 0.25:
-                interval *= 2
-            while interval > 1.5:
-                interval /= 2
-            if 0.25 <= interval <= 1.5:
-                folded.append(interval)
-        if len(folded) < 3:
+
+        times = np.asarray(self.flux_times, dtype=np.float64)
+        hops = np.diff(times)
+        hop = float(np.median(hops)) if len(hops) else 0.0
+        if hop <= 0:
             return 0.0, 0.0
-        median = float(np.median(folded))
-        deviations = np.abs(np.asarray(folded) - median)
-        confidence = float(np.mean(deviations <= max(0.045, median * 0.12)))
-        return 60.0 / median, confidence
+
+        envelope = np.asarray(self.flux_history, dtype=np.float64)
+        envelope = np.maximum(envelope - np.median(envelope), 0.0)
+        envelope -= np.mean(envelope)
+        energy = float(np.dot(envelope, envelope))
+        if energy <= 1e-12:
+            return 0.0, 0.0
+
+        # Tempo is periodicity in the onset-strength envelope, not the distance
+        # between every adjacent transient. The latter mistakes subdivisions and
+        # melodic attacks for beats in dense music.
+        min_bpm = 55.0
+        max_bpm = 190.0
+        min_lag = max(1, int(np.floor(60.0 / (max_bpm * hop))))
+        max_lag = min(len(envelope) - 2, int(np.ceil(60.0 / (min_bpm * hop))))
+        if max_lag < min_lag:
+            return 0.0, 0.0
+
+        correlations = np.correlate(envelope, envelope, mode="full")[len(envelope) - 1:]
+        overlap = np.arange(len(envelope), 0, -1, dtype=np.float64)
+        correlations = correlations / overlap
+        zero_lag = float(correlations[0])
+        if zero_lag <= 1e-12:
+            return 0.0, 0.0
+
+        lags = np.arange(min_lag, max_lag + 1)
+        scores = correlations[lags] / zero_lag
+        best_index = int(np.argmax(scores))
+        best_lag = float(lags[best_index])
+        peak = float(scores[best_index])
+
+        lag_index = int(best_lag)
+        if 0 < lag_index < len(correlations) - 1:
+            left = float(correlations[lag_index - 1])
+            center = float(correlations[lag_index])
+            right = float(correlations[lag_index + 1])
+            denominator = left - 2.0 * center + right
+            if abs(denominator) > 1e-12:
+                best_lag += float(np.clip(0.5 * (left - right) / denominator, -0.5, 0.5))
+
+        support = min(1.0, len(envelope) / max(best_lag * 6.0, 1.0))
+        confidence = float(np.clip((peak - 0.08) / 0.42, 0.0, 1.0) * support)
+        return 60.0 / (best_lag * hop), confidence
 
     def empty_result(self, at_seconds):
         return {

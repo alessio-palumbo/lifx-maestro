@@ -1,8 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
+
+	livemode "lifx-maestro/internal/live"
 )
 
 func TestCommandTreeIncludesExpectedCommands(t *testing.T) {
@@ -84,5 +89,34 @@ func TestNewAnalyzerResolvesRelativePythonOverride(t *testing.T) {
 	}
 	if !filepath.IsAbs(analyzer.PythonPath) {
 		t.Fatalf("Python path = %q, want absolute", analyzer.PythonPath)
+	}
+}
+
+func TestLiveDiagnosticsExposeDecisionInputs(t *testing.T) {
+	var output bytes.Buffer
+	diagnostics := &liveDiagnostics{source: livemode.NewMicrophoneSource(livemode.MicrophoneConfig{}), target: "tv", out: &output}
+	diagnostics.ObserveOutput(livemode.OutputActivity{At: 500 * time.Millisecond, GeneratedEvents: 3, DroppedEvents: 1})
+	diagnostics.Observe(livemode.State{
+		At:              500 * time.Millisecond,
+		InputDB:         -34.2,
+		NoiseFloorDB:    -58.6,
+		MarginDB:        24.4,
+		Energy:          0.62,
+		Low:             0.22,
+		Mid:             0.62,
+		High:            0.92,
+		TempoBPM:        85.7,
+		TempoConfidence: 0.71,
+		Active:          true,
+		Onset:           true,
+	})
+	line := output.String()
+	for _, expected := range []string{
+		"level=-34.2dB", "floor=-58.6dB", "margin=24.4dB", "tempo= 85.7", "confidence=0.71", "gate=open",
+		"accents=1(onset=1 beat=0)", "generated=3", "sent=0", "replaced=1", "errors=0",
+	} {
+		if !strings.Contains(line, expected) {
+			t.Fatalf("diagnostics %q do not contain %q", line, expected)
+		}
 	}
 }

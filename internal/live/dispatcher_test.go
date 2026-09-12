@@ -27,12 +27,16 @@ func (e *blockingExecutor) ExecuteEvent(_ int, event timeline.Event) error {
 }
 
 func TestEnqueueLatestReplacesPendingEvent(t *testing.T) {
+	dispatcher := NewDispatcher(nil, nil)
 	queue := make(chan timeline.Event, 1)
-	enqueueLatest(queue, timeline.Event{Target: "strip", TimeMS: 2})
-	enqueueLatest(queue, timeline.Event{Target: "strip", TimeMS: 3})
+	dispatcher.enqueueLatest(queue, timeline.Event{Target: "strip", TimeMS: 2})
+	dispatcher.enqueueLatest(queue, timeline.Event{Target: "strip", TimeMS: 3})
 
 	if latest := <-queue; latest.TimeMS != 3 {
 		t.Fatalf("pending event time = %d, want latest 3", latest.TimeMS)
+	}
+	if got := dispatcher.Stats().Replaced; got != 1 {
+		t.Fatalf("replaced events = %d, want 1", got)
 	}
 }
 
@@ -62,5 +66,8 @@ func TestDispatcherRunsTargetsConcurrently(t *testing.T) {
 	close(input)
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+	if got := dispatcher.Stats().Sent; got != 2 {
+		t.Fatalf("sent events = %d, want 2", got)
 	}
 }

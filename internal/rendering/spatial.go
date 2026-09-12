@@ -122,7 +122,7 @@ func matrixWaveFrame(intent EffectIntent, surface lifxdevice.Surface, width, hei
 		Direction:      lifxeffects.FlowDirectionReverse,
 		BrightnessMode: lifxeffects.FlowBrightnessConstant,
 	})
-	return flow.FrameAtPhase(float64(intent.BeatIndex)/float64(span), time.Duration(intent.DurationMS)*time.Millisecond)
+	return flow.FrameAtPhase((float64(intent.BeatIndex)+intent.Phase)/float64(span), time.Duration(intent.DurationMS)*time.Millisecond)
 }
 
 // driftFrame keeps calm sections moving without adding a travelling brightness
@@ -137,7 +137,7 @@ func driftFrame(intent EffectIntent, surface lifxdevice.Surface, width, height i
 		Direction:    lifxeffects.FlowDirectionReverse,
 		Sampling:     lifxeffects.FlowSamplingStep,
 	})
-	return drift.FrameAtPhase(float64(intent.BeatIndex)/float64(span), time.Duration(intent.DurationMS)*time.Millisecond)
+	return drift.FrameAtPhase((float64(intent.BeatIndex)+intent.Phase)/float64(span), time.Duration(intent.DurationMS)*time.Millisecond)
 }
 
 func frameCapabilities(intent EffectIntent, surface lifxdevice.Surface, width, height int) lifxeffects.Capabilities {

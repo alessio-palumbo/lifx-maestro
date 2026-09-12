@@ -126,11 +126,16 @@ loop:
 					break loop
 				}
 				state := e.config.Tracker.Update(features)
+				events := e.config.Generator.Generate(state)
+				dropped := 0
+				if len(events) > 0 {
+					dropped = offerLatestBatch(eventBatches, events)
+				}
+				if observer, ok := e.config.Observer.(OutputObserver); ok {
+					observer.ObserveOutput(OutputActivity{At: state.At, GeneratedEvents: len(events), DroppedEvents: dropped})
+				}
 				if e.config.Observer != nil {
 					e.config.Observer.Observe(state)
-				}
-				if events := e.config.Generator.Generate(state); len(events) > 0 {
-					offerLatestBatch(eventBatches, events)
 				}
 			}
 		}
@@ -149,18 +154,21 @@ loop:
 	return runErr
 }
 
-func offerLatestBatch(output chan []timeline.Event, events []timeline.Event) {
+func offerLatestBatch(output chan []timeline.Event, events []timeline.Event) int {
 	select {
 	case output <- events:
-		return
+		return 0
 	default:
 	}
+	dropped := 0
 	select {
-	case <-output:
+	case previous := <-output:
+		dropped = len(previous)
 	default:
 	}
 	select {
 	case output <- events:
 	default:
 	}
+	return dropped
 }
