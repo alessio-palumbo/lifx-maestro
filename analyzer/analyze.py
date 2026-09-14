@@ -45,6 +45,11 @@ def main():
 
 
 LIVE_HEADER = struct.Struct("<IIq")
+LIVE_DEFAULT_HOP_SECONDS = 0.1
+LIVE_ONSET_FRAME_SECONDS = 0.025
+LIVE_ONSET_REFRACTORY_SECONDS = 0.25
+LIVE_ONSET_RELEASE_RATIO = 0.55
+LIVE_TEMPO_HISTORY_SECONDS = 8.0
 
 
 def live_main():
@@ -77,12 +82,16 @@ class LiveWindowAnalyzer:
     """Stateful, causal analysis for overlapping microphone windows."""
 
     def __init__(self):
-        self.previous_magnitude = None
-        # Eight seconds at the default 100 ms hop balances tempo stability with
-        # adaptation when a new rhythmic section starts.
-        self.flux_history = deque(maxlen=80)
-        self.flux_times = deque(maxlen=80)
-        self.transient_times = deque(maxlen=32)
+        self.previous_onset_magnitude = None
+        # The 25 ms causal envelope provides enough temporal resolution for
+        # rhythm while the enclosing 500 ms window remains available for
+        # stable energy and band measurements.
+        history_frames = int(round(LIVE_TEMPO_HISTORY_SECONDS / LIVE_ONSET_FRAME_SECONDS))
+        self.flux_history = deque(maxlen=history_frames)
+        self.flux_times = deque(maxlen=history_frames)
+        self.last_analysis_at = None
+        self.last_onset_at = -1e9
+        self.onset_armed = True
         self.tempo = 0.0
 
     def analyze(self, samples, sample_rate, at_seconds):
@@ -96,20 +105,7 @@ class LiveWindowAnalyzer:
         window_gain = float(np.sqrt(np.mean(np.square(window))))
         rms = float(np.sqrt(np.mean(np.square(samples, dtype=np.float64))))
 
-        flux = 0.0
-        if self.previous_magnitude is not None and len(self.previous_magnitude) == len(magnitude):
-            positive = np.maximum(magnitude - self.previous_magnitude, 0.0)
-            flux = float(np.sum(positive) / max(np.sum(self.previous_magnitude), 1e-12))
-        self.previous_magnitude = magnitude
-
-        history = np.asarray(self.flux_history, dtype=np.float64)
-        threshold = max(0.025, float(np.median(history) + np.std(history) * 2.2)) if len(history) >= 8 else 0.08
-        transient = flux >= threshold
-        self.flux_history.append(flux)
-        self.flux_times.append(at_seconds)
-        accepted_transient = transient and (not self.transient_times or at_seconds - self.transient_times[-1] >= 0.12)
-        if accepted_transient:
-            self.transient_times.append(at_seconds)
+        flux, accepted_transient = self.analyze_onset(samples, sample_rate, at_seconds)
 
         tempo, confidence = self.estimate_tempo()
         if tempo > 0:
@@ -122,13 +118,59 @@ class LiveWindowAnalyzer:
             "mid_db": band_db(magnitude, frequencies, 250, 4000, window_gain),
             "high_db": band_db(magnitude, frequencies, 4000, min(12000, sample_rate / 2), window_gain),
             "onset_strength": round(flux, 6),
+            "onset": bool(accepted_transient),
             "tempo_bpm": round(self.tempo, 3),
             "tempo_confidence": round(confidence, 4),
             "beat": bool(accepted_transient and confidence >= 0.35),
         }
 
+    def analyze_onset(self, samples, sample_rate, at_seconds):
+        elapsed = LIVE_DEFAULT_HOP_SECONDS if self.last_analysis_at is None else at_seconds - self.last_analysis_at
+        self.last_analysis_at = at_seconds
+        if elapsed <= 0 or elapsed > 0.25:
+            elapsed = LIVE_DEFAULT_HOP_SECONDS
+
+        frame_size = max(16, int(round(sample_rate * LIVE_ONSET_FRAME_SECONDS)))
+        newest_size = min(len(samples), max(frame_size, int(round(sample_rate * elapsed))))
+        newest = samples[-newest_size:]
+        frame_count = max(1, int(np.ceil(len(newest) / frame_size)))
+        padded = np.pad(newest, (frame_count * frame_size - len(newest), 0))
+        frame_window = np.hanning(frame_size)
+        frame_start = at_seconds - elapsed
+        strongest = 0.0
+        accepted = False
+
+        for index in range(frame_count):
+            frame = padded[index * frame_size:(index + 1) * frame_size]
+            frame_magnitude = np.abs(np.fft.rfft(frame * frame_window))
+            flux = 0.0
+            if self.previous_onset_magnitude is not None:
+                positive = np.maximum(frame_magnitude - self.previous_onset_magnitude, 0.0)
+                reference = np.maximum(frame_magnitude, self.previous_onset_magnitude)
+                flux = float(np.sum(positive) / max(np.sum(reference), 1e-12))
+            self.previous_onset_magnitude = frame_magnitude
+            strongest = max(strongest, flux)
+
+            history = np.asarray(self.flux_history, dtype=np.float64)
+            upper = max(0.025, float(np.median(history) + np.std(history) * 2.2)) if len(history) >= 32 else 0.08
+            lower = max(0.0125, upper * LIVE_ONSET_RELEASE_RATIO)
+            frame_at = frame_start + min(elapsed, (index + 1) * frame_size / sample_rate)
+
+            if not self.onset_armed and flux <= lower:
+                self.onset_armed = True
+            if self.onset_armed and flux >= upper and frame_at - self.last_onset_at >= LIVE_ONSET_REFRACTORY_SECONDS:
+                accepted = True
+                self.onset_armed = False
+                self.last_onset_at = frame_at
+
+            self.flux_history.append(flux)
+            self.flux_times.append(frame_at)
+
+        return strongest, accepted
+
     def estimate_tempo(self):
-        if len(self.flux_history) < 16 or len(self.flux_times) != len(self.flux_history):
+        minimum_history = int(round(2.0 / LIVE_ONSET_FRAME_SECONDS))
+        if len(self.flux_history) < minimum_history or len(self.flux_times) != len(self.flux_history):
             return 0.0, 0.0
 
         times = np.asarray(self.flux_times, dtype=np.float64)
@@ -188,6 +230,7 @@ class LiveWindowAnalyzer:
             "mid_db": -120.0,
             "high_db": -120.0,
             "onset_strength": 0.0,
+            "onset": False,
             "tempo_bpm": self.tempo,
             "tempo_confidence": 0.0,
             "beat": False,

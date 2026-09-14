@@ -47,6 +47,20 @@ func TestPerformUsesTargetFlag(t *testing.T) {
 	}
 }
 
+func TestLiveExposesSensitivityAndIntensityFlags(t *testing.T) {
+	flags := make(map[string]bool)
+	for _, flag := range liveCommand().Flags {
+		for _, name := range flag.Names() {
+			flags[name] = true
+		}
+	}
+	for _, name := range []string{"target", "input", "style", "intensity", "sensitivity"} {
+		if !flags[name] {
+			t.Fatalf("missing live flag %q", name)
+		}
+	}
+}
+
 func TestNewAnalyzerResolvesARunnableAnalyzer(t *testing.T) {
 	analyzer, err := newAnalyzer(analyzeCommand())
 	if err != nil {
@@ -108,11 +122,12 @@ func TestLiveDiagnosticsExposeDecisionInputs(t *testing.T) {
 		TempoBPM:        85.7,
 		TempoConfidence: 0.71,
 		Active:          true,
+		Sustained:       true,
 		Onset:           true,
 	})
 	line := output.String()
 	for _, expected := range []string{
-		"level=-34.2dB", "floor=-58.6dB", "margin=24.4dB", "tempo= 85.7", "confidence=0.71", "gate=open",
+		"level=-34.2dB", "floor=-58.6dB", "margin=24.4dB", "tempo= 85.7", "confidence=0.71", "gate=open", "motion=ambient",
 		"accents=1(onset=1 beat=0)", "generated=3", "sent=0", "replaced=1", "errors=0",
 	} {
 		if !strings.Contains(line, expected) {

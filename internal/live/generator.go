@@ -23,7 +23,10 @@ type Generator struct {
 	style       styles.Style
 	devices     []devices.DeviceInfo
 	ambientHop  time.Duration
+	accentGap   time.Duration
+	motionScale float64
 	lastAmbient time.Duration
+	lastAccent  time.Duration
 	beatIndex   int
 	motion      float64
 	lastStateAt time.Duration
@@ -40,11 +43,18 @@ func NewGenerator(config GeneratorConfig) (*Generator, error) {
 	if err := generation.ValidateDynamics(config.Intensity); err != nil {
 		return nil, err
 	}
-	if config.AmbientHop <= 0 {
-		config.AmbientHop = 200 * time.Millisecond
+	ambientHop, accentGap, motionScale := livePacing(config.Intensity)
+	if config.AmbientHop > 0 {
+		ambientHop = config.AmbientHop
 	}
 	style = liveStyle(style, config.Intensity)
-	return &Generator{style: style, devices: config.Devices, ambientHop: config.AmbientHop}, nil
+	return &Generator{
+		style:       style,
+		devices:     config.Devices,
+		ambientHop:  ambientHop,
+		accentGap:   accentGap,
+		motionScale: motionScale,
+	}, nil
 }
 
 func (g *Generator) Generate(state State) []timeline.Event {
@@ -54,6 +64,12 @@ func (g *Generator) Generate(state State) []timeline.Event {
 	}
 
 	accent := state.Onset || state.Beat
+	if accent && g.lastAccent > 0 && state.At-g.lastAccent < g.accentGap {
+		accent = false
+	}
+	if !accent && !state.Sustained {
+		return nil
+	}
 	if !accent && state.At-g.lastAmbient < g.ambientHop {
 		return nil
 	}
@@ -67,6 +83,7 @@ func (g *Generator) Generate(state State) []timeline.Event {
 	brightness := clamp((0.12+state.Energy*0.68)*g.style.BrightnessScale, 0.01, 1)
 	effectIndex := g.beatIndex
 	if accent {
+		g.lastAccent = state.At
 		kind = rendering.IntentPulse
 		if state.High > state.Low*1.15 && state.High > state.Mid*1.1 {
 			kind = rendering.IntentSweep
@@ -122,8 +139,21 @@ func (g *Generator) advanceMotion(state State) float64 {
 	if bpm < 40 || bpm > 240 {
 		bpm = 90
 	}
-	g.motion += delta.Seconds() * bpm / 60
+	g.motion += delta.Seconds() * bpm / 60 * g.motionScale
 	return g.motion
+}
+
+func livePacing(intensity generation.DynamicsOverride) (time.Duration, time.Duration, float64) {
+	switch intensity {
+	case generation.DynamicsCalm:
+		return 400 * time.Millisecond, 600 * time.Millisecond, 0.55
+	case generation.DynamicsEnergetic:
+		return 200 * time.Millisecond, 120 * time.Millisecond, 1
+	case "", generation.DynamicsAuto, generation.DynamicsBalanced:
+		return 250 * time.Millisecond, 300 * time.Millisecond, 0.8
+	default:
+		panic(fmt.Sprintf("validated intensity %q became unsupported", intensity))
+	}
 }
 
 func liveStyle(style styles.Style, intensity generation.DynamicsOverride) styles.Style {

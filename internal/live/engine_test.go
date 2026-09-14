@@ -55,6 +55,7 @@ func (a *windowAnalyzer) Analyze(_ context.Context, window PCMWindow) (Features,
 		MidDB:         -20,
 		HighDB:        -24,
 		OnsetStrength: 0.8,
+		Onset:         true,
 	}, nil
 }
 

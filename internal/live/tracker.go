@@ -1,8 +1,18 @@
 package live
 
 import (
+	"fmt"
 	"math"
+	"strings"
 	"time"
+)
+
+type Sensitivity string
+
+const (
+	SensitivityLow    Sensitivity = "low"
+	SensitivityNormal Sensitivity = "normal"
+	SensitivityHigh   Sensitivity = "high"
 )
 
 type TrackerConfig struct {
@@ -33,6 +43,21 @@ func DefaultTrackerConfig() TrackerConfig {
 	}
 }
 
+func TrackerConfigForSensitivity(value string) (TrackerConfig, error) {
+	config := DefaultTrackerConfig()
+	switch Sensitivity(strings.ToLower(strings.TrimSpace(value))) {
+	case SensitivityLow:
+		config.GateAboveNoiseDB = 12
+	case "", SensitivityNormal:
+		// Default six-decibel margin.
+	case SensitivityHigh:
+		config.GateAboveNoiseDB = 3
+	default:
+		return TrackerConfig{}, fmt.Errorf("unsupported live sensitivity %q (use low, normal, or high)", value)
+	}
+	return config, nil
+}
+
 type StateTracker struct {
 	config          TrackerConfig
 	noiseFloorDB    float64
@@ -48,6 +73,10 @@ type StateTracker struct {
 	tempo           float64
 	tempoConfidence float64
 	nextBeatAt      time.Duration
+	clockHoldUntil  time.Duration
+	activeSince     time.Duration
+	sustainedUntil  time.Duration
+	rawActive       bool
 	initialized     bool
 	startedAt       time.Duration
 	signalSeen      bool
@@ -64,6 +93,10 @@ const (
 	bandCeilingMinimumRangeDB = 12.0
 	bandCeilingAttack         = 0.35
 	bandCeilingRelease        = 0.002
+	sustainedInputMinimum     = 0.03
+	sustainedAttackDuration   = 650 * time.Millisecond
+	sustainedReleaseDuration  = 800 * time.Millisecond
+	beatClockHoldDuration     = 1500 * time.Millisecond
 )
 
 func NewStateTracker(config TrackerConfig) *StateTracker {
@@ -114,10 +147,11 @@ func (t *StateTracker) Update(features Features) State {
 	t.mid = smooth(t.mid, bandLevel(features.MidDB, t.bandFloorDB[1], t.bandCeilingDB[1], t.config), t.config.Attack, t.config.Release)
 	t.high = smooth(t.high, bandLevel(features.HighDB, t.bandFloorDB[2], t.bandCeilingDB[2], t.config), t.config.Attack, t.config.Release)
 
-	onset := rawEnergy > 0 && features.OnsetStrength >= onsetThreshold && features.At-t.lastOnset >= t.config.OnsetCooldown
+	onset := rawEnergy > 0 && features.Onset
 	if onset {
 		t.lastOnset = features.At
 	}
+	sustained := t.updateSustained(features.At, rawEnergy)
 	fluxRate := 0.04
 	if features.OnsetStrength > t.fluxBaseline {
 		fluxRate = 0.006
@@ -144,7 +178,7 @@ func (t *StateTracker) Update(features Features) State {
 	// an older clock is less disruptive than dropping rhythmic output entirely.
 	reportedTempo := t.tempo
 	observedBeat := onset || (features.Beat && features.TempoConfidence >= minimumTempoConfidence)
-	beat := t.updateBeatClock(features.At, reportedTempo, observedBeat)
+	beat := t.updateBeatClock(features.At, reportedTempo, observedBeat, sustained && rawEnergy >= sustainedInputMinimum)
 
 	trend := clamp(t.energy-t.lastEnergy, -1, 1)
 	t.lastEnergy = t.energy
@@ -163,15 +197,45 @@ func (t *StateTracker) Update(features Features) State {
 		TempoBPM:        reportedTempo,
 		TempoConfidence: clamp(t.tempoConfidence, 0, 1),
 		Active:          t.energy >= MinimumActiveEnergy,
+		Sustained:       sustained,
 	}
 }
 
-func (t *StateTracker) updateBeatClock(at time.Duration, bpm float64, observed bool) bool {
+func (t *StateTracker) updateSustained(at time.Duration, rawEnergy float64) bool {
+	if rawEnergy >= sustainedInputMinimum {
+		if !t.rawActive {
+			t.activeSince = at
+			t.rawActive = true
+		}
+		if at-t.activeSince >= sustainedAttackDuration {
+			t.sustainedUntil = at + sustainedReleaseDuration
+		}
+	} else {
+		t.rawActive = false
+		t.activeSince = 0
+	}
+	return t.sustainedUntil > 0 && at <= t.sustainedUntil
+}
+
+func (t *StateTracker) updateBeatClock(at time.Duration, bpm float64, observed, sustained bool) bool {
 	if bpm < 40 || bpm > 240 {
 		t.nextBeatAt = 0
 		return false
 	}
 	period := time.Duration(float64(time.Minute) / bpm)
+	if sustained {
+		t.clockHoldUntil = at + beatClockHoldDuration
+	} else if observed {
+		hold := beatClockHoldDuration
+		if 2*period > hold {
+			hold = 2 * period
+		}
+		t.clockHoldUntil = at + hold
+	}
+	if t.clockHoldUntil == 0 || at > t.clockHoldUntil {
+		t.nextBeatAt = 0
+		return observed
+	}
 	if t.nextBeatAt == 0 {
 		anchor := at
 		if t.lastOnset > 0 && at-t.lastOnset <= period {

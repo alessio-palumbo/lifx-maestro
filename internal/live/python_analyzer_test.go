@@ -75,6 +75,7 @@ func TestPythonAnalyzerHelper(t *testing.T) {
 			MidDB:           -40,
 			HighDB:          -50,
 			OnsetStrength:   0.8,
+			Onset:           true,
 			TempoBPM:        120,
 			TempoConfidence: 0.9,
 			Beat:            true,

@@ -23,13 +23,34 @@ func TestStateTrackerGatesSteadyRoomNoise(t *testing.T) {
 	}
 }
 
+func TestTrackerConfigForSensitivityAdjustsNoiseMargin(t *testing.T) {
+	low, err := TrackerConfigForSensitivity("low")
+	if err != nil {
+		t.Fatal(err)
+	}
+	normal, err := TrackerConfigForSensitivity("normal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	high, err := TrackerConfigForSensitivity("high")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !(low.GateAboveNoiseDB > normal.GateAboveNoiseDB && normal.GateAboveNoiseDB > high.GateAboveNoiseDB) {
+		t.Fatalf("sensitivity margins low=%.1f normal=%.1f high=%.1f", low.GateAboveNoiseDB, normal.GateAboveNoiseDB, high.GateAboveNoiseDB)
+	}
+	if _, err := TrackerConfigForSensitivity("extreme"); err == nil {
+		t.Fatal("unsupported sensitivity was accepted")
+	}
+}
+
 func TestStateTrackerLetsClapThroughWithoutMovingNoiseFloor(t *testing.T) {
 	tracker := NewStateTracker(DefaultTrackerConfig())
 	for i := 0; i < 80; i++ {
 		tracker.Update(Features{At: time.Duration(i) * 50 * time.Millisecond, RMSDB: -52, LowDB: -55, MidDB: -54, HighDB: -56, OnsetStrength: 0.002})
 	}
 	before := tracker.noiseFloorDB
-	state := tracker.Update(Features{At: 4 * time.Second, RMSDB: -12, LowDB: -24, MidDB: -15, HighDB: -13, OnsetStrength: 0.8})
+	state := tracker.Update(Features{At: 4 * time.Second, RMSDB: -12, LowDB: -24, MidDB: -15, HighDB: -13, OnsetStrength: 0.8, Onset: true})
 
 	if !state.Active || !state.Onset {
 		t.Fatalf("clap was not detected: %+v", state)
@@ -65,6 +86,7 @@ func TestStateTrackerDoesNotLearnSustainedMusicAsNoise(t *testing.T) {
 			MidDB:         -37,
 			HighDB:        -42,
 			OnsetStrength: onset,
+			Onset:         onset >= 0.3,
 		})
 	}
 	if !state.Active || state.Energy < 0.5 {
@@ -164,6 +186,7 @@ func TestStateTrackerContinuesBeatClockBetweenReliableObservations(t *testing.T)
 		MidDB:           -22,
 		HighDB:          -28,
 		OnsetStrength:   0.8,
+		Onset:           true,
 		TempoBPM:        90,
 		TempoConfidence: 0.9,
 		Beat:            true,
@@ -189,5 +212,91 @@ func TestStateTrackerContinuesBeatClockBetweenReliableObservations(t *testing.T)
 	}
 	if beats != 2 {
 		t.Fatalf("predicted beats = %d, want 2 while confidence temporarily decays", beats)
+	}
+}
+
+func TestStateTrackerUsesExplicitOnsetOnlyOnceAcrossOverlappingWindows(t *testing.T) {
+	tracker := NewStateTracker(DefaultTrackerConfig())
+	onsets := 0
+	for i := 0; i < 8; i++ {
+		state := tracker.Update(Features{
+			At:            time.Second + time.Duration(i)*100*time.Millisecond,
+			RMSDB:         -20,
+			LowDB:         -25,
+			MidDB:         -22,
+			HighDB:        -28,
+			OnsetStrength: 0.8,
+			Onset:         i == 0,
+		})
+		if state.Onset {
+			onsets++
+		}
+	}
+	if onsets != 1 {
+		t.Fatalf("onsets = %d, want one explicit event", onsets)
+	}
+}
+
+func TestStateTrackerRequiresContinuousInputBeforeSustained(t *testing.T) {
+	tracker := NewStateTracker(DefaultTrackerConfig())
+	for i := 0; i < 6; i++ {
+		state := tracker.Update(Features{
+			At:     time.Second + time.Duration(i)*100*time.Millisecond,
+			RMSDB:  -20,
+			LowDB:  -25,
+			MidDB:  -22,
+			HighDB: -28,
+			Onset:  i == 0,
+		})
+		if state.Sustained {
+			t.Fatalf("isolated 500 ms tail became sustained at %s", state.At)
+		}
+	}
+
+	var state State
+	for i := 0; i < 9; i++ {
+		state = tracker.Update(Features{
+			At:     2*time.Second + time.Duration(i)*100*time.Millisecond,
+			RMSDB:  -20,
+			LowDB:  -25,
+			MidDB:  -22,
+			HighDB: -28,
+		})
+	}
+	if !state.Sustained {
+		t.Fatal("continuous input did not become sustained")
+	}
+}
+
+func TestStateTrackerStopsPredictedClockAfterInputEnds(t *testing.T) {
+	tracker := NewStateTracker(DefaultTrackerConfig())
+	for i := 0; i < 10; i++ {
+		tracker.Update(Features{
+			At:              time.Second + time.Duration(i)*100*time.Millisecond,
+			RMSDB:           -20,
+			LowDB:           -25,
+			MidDB:           -22,
+			HighDB:          -28,
+			Onset:           i == 0,
+			TempoBPM:        120,
+			TempoConfidence: 0.9,
+		})
+	}
+
+	beatsAfterHold := 0
+	for i := 0; i < 35; i++ {
+		state := tracker.Update(Features{
+			At:     2*time.Second + time.Duration(i)*100*time.Millisecond,
+			RMSDB:  -90,
+			LowDB:  -90,
+			MidDB:  -90,
+			HighDB: -90,
+		})
+		if state.At >= 4*time.Second && state.Beat {
+			beatsAfterHold++
+		}
+	}
+	if beatsAfterHold != 0 {
+		t.Fatalf("predicted beats after hold expired = %d", beatsAfterHold)
 	}
 }

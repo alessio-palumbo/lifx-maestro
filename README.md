@@ -260,6 +260,7 @@ Options:
 - `--target string`: device label, group, location, serial, or comma-separated selectors. Default: `all`
 - `--style string`: generation style. Default: `synthwave`
 - `--intensity string`: `auto`, `calm`, `balanced`, or `energetic`. Default: `auto`
+- `--sensitivity string`: microphone sensitivity: `low`, `normal`, or `high`. Default: `low`
 - `--dry-run`: analyze real microphone input but send events to the mock controller
 - `--verbose`: print rate-limited input level, noise margin, energy, frequency-band, tempo-confidence, gate, and accent diagnostics
 - `--python string`: Python executable to use instead of the bundled analyzer
@@ -270,6 +271,7 @@ Examples:
 go run ./cmd/maestro live --list-inputs
 go run ./cmd/maestro live --input "MacBook Pro Microphone" --target tv,desk
 go run ./cmd/maestro live --target "Living Room" --style warm --intensity calm
+go run ./cmd/maestro live --target "Living Room" --intensity calm --sensitivity low
 go run ./cmd/maestro live --dry-run --verbose
 ```
 
@@ -300,9 +302,12 @@ first full analysis is available after roughly 500 ms. Capture never waits for
 analysis or LAN writes: bounded channels drop stale audio or lighting states under
 load instead of accumulating latency.
 
-The long-lived Python process calculates RMS, low/mid/high band energy, spectral
-flux, and a causal rolling tempo estimate. Go maintains the evolving noise floor,
-onset baseline, smoothed energy, and generator decisions. Each frequency band has
+The long-lived Python process calculates RMS, low/mid/high band energy, explicit
+onset events, and a causal rolling tempo estimate. Energy and bands use the full
+500 ms window. Onsets use only the newest audio, split into 25 ms frames, with an
+adaptive upper threshold, lower re-arm threshold, and 250 ms refractory period.
+This prevents one impact from being detected again in each overlapping window.
+Go maintains the evolving noise floor, smoothed energy, and generator decisions. Each frequency band has
 its own adaptive floor. Steady ambience is calibrated during the first three
 seconds. After that, quiet observations can lower a floor and near-baseline noise
 can raise it slowly, but clearly active audio and detected transients freeze upward
@@ -312,15 +317,31 @@ generation gate; individual low, mid, or high bands may be zero without closing 
 Each frequency band also maintains a slowly moving upper ceiling, preventing one
 band from remaining pinned at `1.00` throughout a loud section.
 
+Sensitivity changes the margin required above the measured floor rather than
+changing the reported floor itself. `low` requires a 12 dB margin and rejects more
+background sound, `normal` uses 6 dB, and `high` uses 3 dB. It remains an amplitude
+gate, not a music classifier, so nearby speech or clapping may still trigger Live.
+
+An isolated onset produces one accent. Ambient motion starts only after active
+input has persisted for 650 ms, then receives an 800 ms release; this avoids a
+tap's rolling-window energy tail producing several unrelated color changes.
+
+Live intensity also controls temporal density. `calm` spaces accents by at least
+600 ms, emits ambient movement every 400 ms, and slows spatial travel. `balanced`
+and the default `auto` use moderate pacing, while `energetic` keeps the denser
+beat/onset response. This visual pacing is deliberately separate from the detected
+tempo because a valid double-time pulse can still be too busy for a calm show.
+
 Tempo is estimated from periodicity in the rolling onset-strength envelope, so
 melodic attacks and rhythmic subdivisions do not each become an assumed beat.
 Candidates need at least `0.45` confidence before they can update the stable
 tempo. Half-time and double-time candidates are folded into a practical
 `70-140 BPM` lighting range, and confidence decays when no reliable candidates
 arrive. Once acquired,
-the clock continues through ambiguous active sections until a reliable estimate
-retunes it; confidence therefore describes the freshness of the estimate rather
-than switching rhythmic output off. Verbose accent and output counts cover the
+the clock continues through ambiguous active sections but expires about 1.5
+seconds after current input and onset evidence disappear; confidence therefore
+describes the freshness of the estimate rather than directly switching rhythmic
+output off. Verbose accent and output counts cover the
 whole 500 ms log interval rather than only the final analysis sample. `generated`
 counts rendered device events, `sent` counts completed device writes, `replaced`
 counts stale events discarded to protect latency, and `errors` counts failed

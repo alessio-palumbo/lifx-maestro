@@ -59,16 +59,21 @@ func liveCommand() *cli.Command {
 			&cli.StringFlag{Name: "target", Value: "all", Usage: "target selector"},
 			&cli.StringFlag{Name: "style", Value: "synthwave", Usage: "generation style"},
 			&cli.StringFlag{Name: "intensity", Value: string(generation.DynamicsAuto), Usage: "show intensity (auto, calm, balanced, or energetic)"},
+			&cli.StringFlag{Name: "sensitivity", Value: string(livemode.SensitivityLow), Usage: "microphone sensitivity (low, normal, or high)"},
 			&cli.BoolFlag{Name: "dry-run", Usage: "use mock device controller"},
 			&cli.BoolFlag{Name: "verbose", Usage: "print periodically refreshed analysis diagnostics"},
 			&cli.StringFlag{Name: "python", Usage: "python executable (overrides the bundled analyzer)"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			if cmd.Args().Len() != 0 {
-				return fmt.Errorf("usage: maestro live [--input name] [--target all] [--style synthwave] [--verbose]")
+				return fmt.Errorf("usage: maestro live [--input name] [--target all] [--style synthwave] [--intensity auto] [--sensitivity low] [--verbose]")
 			}
 			if cmd.Bool("list-inputs") {
 				return printInputDevices()
+			}
+			trackerConfig, err := livemode.TrackerConfigForSensitivity(cmd.String("sensitivity"))
+			if err != nil {
+				return err
 			}
 
 			ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
@@ -126,6 +131,7 @@ func liveCommand() *cli.Command {
 			engine, err := livemode.NewEngine(livemode.EngineConfig{
 				Source:    source,
 				Analyzer:  analyzer,
+				Tracker:   livemode.NewStateTracker(trackerConfig),
 				Generator: generator,
 				Sink:      dispatcher,
 				Observer:  observer,
@@ -248,6 +254,10 @@ func (d *liveDiagnostics) Observe(state livemode.State) {
 	if state.Active {
 		gate = "open"
 	}
+	motion := "accent-only"
+	if state.Sustained {
+		motion = "ambient"
+	}
 	dispatch := livemode.DispatcherStats{}
 	if d.dispatcher != nil {
 		dispatch = d.dispatcher.Stats()
@@ -255,8 +265,8 @@ func (d *liveDiagnostics) Observe(state livemode.State) {
 	sent := dispatch.Sent - d.lastDispatch.Sent
 	replaced := dispatch.Replaced - d.lastDispatch.Replaced + uint64(d.droppedEvents)
 	errors := dispatch.Errors - d.lastDispatch.Errors
-	fmt.Fprintf(d.out, "[live %s] level=%5.1fdB floor=%5.1fdB margin=%4.1fdB energy=%.2f low=%.2f mid=%.2f high=%.2f tempo=%5.1f confidence=%.2f gate=%s accents=%d(onset=%d beat=%d) generated=%d sent=%d replaced=%d errors=%d\n",
-		playback.FormatOffset(state.At), state.InputDB, state.NoiseFloorDB, state.MarginDB, state.Energy, state.Low, state.Mid, state.High, state.TempoBPM, state.TempoConfidence, gate, d.accents, d.onsets, d.beats, d.generated, sent, replaced, errors)
+	fmt.Fprintf(d.out, "[live %s] level=%5.1fdB floor=%5.1fdB margin=%4.1fdB energy=%.2f low=%.2f mid=%.2f high=%.2f tempo=%5.1f confidence=%.2f gate=%s motion=%s accents=%d(onset=%d beat=%d) generated=%d sent=%d replaced=%d errors=%d\n",
+		playback.FormatOffset(state.At), state.InputDB, state.NoiseFloorDB, state.MarginDB, state.Energy, state.Low, state.Mid, state.High, state.TempoBPM, state.TempoConfidence, gate, motion, d.accents, d.onsets, d.beats, d.generated, sent, replaced, errors)
 	d.lastDispatch = dispatch
 	d.accents = 0
 	d.onsets = 0

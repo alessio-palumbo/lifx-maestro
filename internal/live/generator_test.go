@@ -20,7 +20,7 @@ func TestGeneratorIsDeterministicForTimestampedStates(t *testing.T) {
 		}},
 	}
 	states := []State{
-		{At: 200 * time.Millisecond, Active: true, Energy: 0.3, Low: 0.5, Mid: 0.2, High: 0.1},
+		{At: 200 * time.Millisecond, Active: true, Sustained: true, Energy: 0.3, Low: 0.5, Mid: 0.2, High: 0.1},
 		{At: 400 * time.Millisecond, Active: true, Energy: 0.8, Low: 0.2, Mid: 0.3, High: 0.9, Onset: true, TempoBPM: 120},
 	}
 
@@ -62,10 +62,11 @@ func TestGeneratorDoesNotRequireEveryFrequencyBand(t *testing.T) {
 		t.Fatal(err)
 	}
 	events := generator.Generate(State{
-		At:     500 * time.Millisecond,
-		Active: true,
-		Energy: 0.2,
-		Low:    0.3,
+		At:        500 * time.Millisecond,
+		Active:    true,
+		Sustained: true,
+		Energy:    0.2,
+		Low:       0.3,
 	})
 	if len(events) == 0 {
 		t.Fatal("an active state with empty mid/high bands produced no events")
@@ -112,15 +113,66 @@ func TestGeneratorAdvancesAmbientMultiZoneFrameWithoutAccents(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	first := generator.Generate(State{At: 200 * time.Millisecond, Active: true, Energy: 0.4, Mid: 0.5})
+	first := generator.Generate(State{At: 250 * time.Millisecond, Active: true, Sustained: true, Energy: 0.4, Mid: 0.5})
 	var latest []timeline.Event
-	for at := 400 * time.Millisecond; at <= 1600*time.Millisecond; at += 200 * time.Millisecond {
-		latest = generator.Generate(State{At: at, Active: true, Energy: 0.4, Mid: 0.5})
+	for at := 500 * time.Millisecond; at <= 1750*time.Millisecond; at += 250 * time.Millisecond {
+		latest = generator.Generate(State{At: at, Active: true, Sustained: true, Energy: 0.4, Mid: 0.5})
 	}
 	if len(first) != 1 || len(latest) != 1 {
 		t.Fatalf("ambient events = %d then %d, want one spatial event each", len(first), len(latest))
 	}
 	if bytes.Equal(first[0].Params, latest[0].Params) {
 		t.Fatal("ambient multizone frame did not move while audio remained active")
+	}
+}
+
+func TestGeneratorDoesNotEchoAnIsolatedOnsetEnergyTail(t *testing.T) {
+	generator, err := NewGenerator(GeneratorConfig{
+		Devices: []devices.DeviceInfo{{ID: "lamp", Capabilities: devices.DeviceCapabilities{Kind: devices.DeviceKindSingleZone}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if events := generator.Generate(State{At: time.Second, Active: true, Onset: true, Energy: 0.7}); len(events) != 1 {
+		t.Fatalf("onset events = %d, want one", len(events))
+	}
+	for at := 1100 * time.Millisecond; at <= 1600*time.Millisecond; at += 100 * time.Millisecond {
+		if events := generator.Generate(State{At: at, Active: true, Energy: 0.5}); len(events) != 0 {
+			t.Fatalf("energy tail generated %d events at %s", len(events), at)
+		}
+	}
+}
+
+func TestIntensityControlsLiveEventDensity(t *testing.T) {
+	countEvents := func(intensity generation.DynamicsOverride) int {
+		generator, err := NewGenerator(GeneratorConfig{
+			Intensity: intensity,
+			Devices: []devices.DeviceInfo{{
+				ID:           "lamp",
+				Capabilities: devices.DeviceCapabilities{Kind: devices.DeviceKindSingleZone},
+			}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		count := 0
+		for at := 100 * time.Millisecond; at <= time.Second; at += 100 * time.Millisecond {
+			count += len(generator.Generate(State{
+				At:       at,
+				Active:   true,
+				Energy:   0.4,
+				High:     0.7,
+				Onset:    true,
+				TempoBPM: 120,
+			}))
+		}
+		return count
+	}
+
+	calm := countEvents(generation.DynamicsCalm)
+	auto := countEvents(generation.DynamicsAuto)
+	energetic := countEvents(generation.DynamicsEnergetic)
+	if !(calm < auto && auto < energetic) {
+		t.Fatalf("event density calm=%d auto=%d energetic=%d", calm, auto, energetic)
 	}
 }

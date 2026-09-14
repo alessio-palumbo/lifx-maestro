@@ -126,6 +126,7 @@ type liveFeatureResponse struct {
 	MidDB           float64 `json:"mid_db"`
 	HighDB          float64 `json:"high_db"`
 	OnsetStrength   float64 `json:"onset_strength"`
+	Onset           bool    `json:"onset"`
 	TempoBPM        float64 `json:"tempo_bpm"`
 	TempoConfidence float64 `json:"tempo_confidence"`
 	Beat            bool    `json:"beat"`
@@ -139,6 +140,7 @@ func (r liveFeatureResponse) features() Features {
 		MidDB:           r.MidDB,
 		HighDB:          r.HighDB,
 		OnsetStrength:   r.OnsetStrength,
+		Onset:           r.Onset,
 		TempoBPM:        r.TempoBPM,
 		TempoConfidence: r.TempoConfidence,
 		Beat:            r.Beat,

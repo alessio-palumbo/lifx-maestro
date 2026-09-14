@@ -27,6 +27,7 @@ type Features struct {
 	MidDB           float64
 	HighDB          float64
 	OnsetStrength   float64
+	Onset           bool
 	TempoBPM        float64
 	TempoConfidence float64
 	Beat            bool
@@ -47,6 +48,7 @@ type State struct {
 	TempoBPM        float64
 	TempoConfidence float64
 	Active          bool
+	Sustained       bool
 }
 
 type AudioSource interface {
