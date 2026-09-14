@@ -40,6 +40,9 @@ func TestPythonAnalyzerUsesPersistentBinaryProtocol(t *testing.T) {
 		if features.LowDB != -30 || !features.Beat {
 			t.Fatalf("response %d = %+v", index, features)
 		}
+		if len(features.TempoCandidates) != 1 || features.TempoCandidates[0].BPM != 80 {
+			t.Fatalf("response %d tempo candidates = %+v", index, features.TempoCandidates)
+		}
 	}
 }
 
@@ -78,7 +81,12 @@ func TestPythonAnalyzerHelper(t *testing.T) {
 			Onset:           true,
 			TempoBPM:        120,
 			TempoConfidence: 0.9,
-			Beat:            true,
+			TempoCandidates: []struct {
+				BPM        float64 `json:"bpm"`
+				Confidence float64 `json:"confidence"`
+				Strength   float64 `json:"strength"`
+			}{{BPM: 80, Confidence: 0.8, Strength: 0.7}},
+			Beat: true,
 		})
 	}
 }

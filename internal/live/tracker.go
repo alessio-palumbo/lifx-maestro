@@ -72,11 +72,24 @@ type StateTracker struct {
 	lastOnset       time.Duration
 	tempo           float64
 	tempoConfidence float64
+	pendingTempo    float64
+	pendingSince    time.Duration
 	nextBeatAt      time.Duration
 	clockHoldUntil  time.Duration
 	activeSince     time.Duration
 	sustainedUntil  time.Duration
 	rawActive       bool
+	onsetTimes      []time.Duration
+	shortEnergy     float64
+	longEnergy      float64
+	intensity       float64
+	novelty         float64
+	dynamics        DynamicsLevel
+	pendingDynamics DynamicsLevel
+	dynamicsSince   time.Duration
+	previousBands   [3]float64
+	noveltyArmed    bool
+	lastSectionAt   time.Duration
 	initialized     bool
 	startedAt       time.Duration
 	signalSeen      bool
@@ -97,6 +110,10 @@ const (
 	sustainedAttackDuration   = 650 * time.Millisecond
 	sustainedReleaseDuration  = 800 * time.Millisecond
 	beatClockHoldDuration     = 1500 * time.Millisecond
+	tempoSwitchDuration       = 2500 * time.Millisecond
+	tempoAcquireDuration      = 1200 * time.Millisecond
+	activityWindowDuration    = 4 * time.Second
+	sectionChangeCooldown     = 6 * time.Second
 )
 
 func NewStateTracker(config TrackerConfig) *StateTracker {
@@ -109,6 +126,8 @@ func NewStateTracker(config TrackerConfig) *StateTracker {
 		noiseFloorDB:  config.InitialNoiseFloorDB,
 		bandFloorDB:   [3]float64{config.InitialNoiseFloorDB, config.InitialNoiseFloorDB, config.InitialNoiseFloorDB},
 		bandCeilingDB: [3]float64{ceiling, ceiling, ceiling},
+		dynamics:      DynamicsCalm,
+		noveltyArmed:  true,
 	}
 }
 
@@ -158,27 +177,14 @@ func (t *StateTracker) Update(features Features) State {
 	}
 	t.fluxBaseline = lerp(t.fluxBaseline, features.OnsetStrength, fluxRate)
 
-	if features.TempoConfidence >= minimumTempoConfidence && features.TempoBPM >= 40 && features.TempoBPM <= 240 {
-		candidate := stabilizeTempo(features.TempoBPM)
-		if t.tempo == 0 {
-			t.tempo = candidate
-		} else {
-			t.tempo = lerp(t.tempo, candidate, 0.12)
-		}
-		if t.tempoConfidence == 0 {
-			t.tempoConfidence = features.TempoConfidence
-		} else {
-			t.tempoConfidence = lerp(t.tempoConfidence, features.TempoConfidence, 0.2)
-		}
-	} else {
-		t.tempoConfidence *= tempoConfidenceDecay
-	}
+	t.updateTempo(features)
 	// Confidence controls whether a new estimate may retune the clock. Once a
 	// plausible pulse is established, keep it through ambiguous active sections;
 	// an older clock is less disruptive than dropping rhythmic output entirely.
 	reportedTempo := t.tempo
 	observedBeat := onset || (features.Beat && features.TempoConfidence >= minimumTempoConfidence)
 	beat := t.updateBeatClock(features.At, reportedTempo, observedBeat, sustained && rawEnergy >= sustainedInputMinimum)
+	activity, intensity, dynamics, novelty, sectionChange := t.updateInterpretation(features.At, onset, sustained)
 
 	trend := clamp(t.energy-t.lastEnergy, -1, 1)
 	t.lastEnergy = t.energy
@@ -198,7 +204,201 @@ func (t *StateTracker) Update(features Features) State {
 		TempoConfidence: clamp(t.tempoConfidence, 0, 1),
 		Active:          t.energy >= MinimumActiveEnergy,
 		Sustained:       sustained,
+		Activity:        activity,
+		Intensity:       intensity,
+		Dynamics:        dynamics,
+		Novelty:         novelty,
+		SectionChange:   sectionChange,
 	}
+}
+
+func (t *StateTracker) updateInterpretation(at time.Duration, onset, sustained bool) (float64, float64, DynamicsLevel, float64, bool) {
+	if onset {
+		t.onsetTimes = append(t.onsetTimes, at)
+	}
+	cutoff := at - activityWindowDuration
+	first := 0
+	for first < len(t.onsetTimes) && t.onsetTimes[first] < cutoff {
+		first++
+	}
+	if first > 0 {
+		t.onsetTimes = append(t.onsetTimes[:0], t.onsetTimes[first:]...)
+	}
+	activity := clamp(float64(len(t.onsetTimes))/12.0, 0, 1)
+
+	t.shortEnergy = lerp(t.shortEnergy, t.energy, 0.18)
+	t.longEnergy = lerp(t.longEnergy, t.energy, 0.02)
+	contrast := clamp(math.Abs(t.shortEnergy-t.longEnergy)*2.5, 0, 1)
+	bandChange := (math.Abs(t.low-t.previousBands[0]) + math.Abs(t.mid-t.previousBands[1]) + math.Abs(t.high-t.previousBands[2])) / 3
+	t.previousBands = [3]float64{t.low, t.mid, t.high}
+	rawNovelty := clamp(contrast*0.7+bandChange*1.2, 0, 1)
+	t.novelty = smooth(t.novelty, rawNovelty, 0.18, 0.04)
+
+	rise := clamp(t.energy-t.longEnergy, 0, 1)
+	rawIntensity := clamp(
+		t.energy*0.48+
+			activity*0.10+
+			t.high*0.08+
+			clamp(t.tempoConfidence, 0, 1)*0.08+
+			contrast*0.14+
+			rise*0.12,
+		0, 1,
+	)
+	t.intensity = smooth(t.intensity, rawIntensity, 0.08, 0.03)
+
+	candidate := DynamicsBalanced
+	if t.intensity < 0.38 {
+		candidate = DynamicsCalm
+	} else if t.intensity >= 0.64 {
+		candidate = DynamicsEnergetic
+	}
+	if candidate == t.dynamics {
+		t.pendingDynamics = ""
+	} else if candidate != t.pendingDynamics {
+		t.pendingDynamics = candidate
+		t.dynamicsSince = at
+	} else {
+		delay := 1500 * time.Millisecond
+		if dynamicsRank(candidate) < dynamicsRank(t.dynamics) {
+			delay = 3 * time.Second
+		}
+		if at-t.dynamicsSince >= delay {
+			t.dynamics = candidate
+			t.pendingDynamics = ""
+		}
+	}
+	if !t.noveltyArmed && t.novelty < 0.2 {
+		t.noveltyArmed = true
+	}
+	sectionChange := sustained && t.noveltyArmed && t.novelty >= 0.42 && at-t.lastSectionAt >= sectionChangeCooldown
+	if sectionChange {
+		t.noveltyArmed = false
+		t.lastSectionAt = at
+	}
+	return activity, t.intensity, t.dynamics, t.novelty, sectionChange
+}
+
+func dynamicsRank(level DynamicsLevel) int {
+	switch level {
+	case DynamicsEnergetic:
+		return 2
+	case DynamicsBalanced:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func (t *StateTracker) updateTempo(features Features) {
+	candidate, confidence := selectTempoCandidate(features.TempoCandidates, t.tempo)
+	fromAlternatives := candidate > 0
+	if candidate == 0 && features.TempoConfidence >= minimumTempoConfidence && features.TempoBPM >= 40 && features.TempoBPM <= 240 {
+		candidate = stabilizeTempo(features.TempoBPM)
+		confidence = features.TempoConfidence
+	}
+	if candidate == 0 || confidence < minimumTempoConfidence {
+		t.tempoConfidence *= tempoConfidenceDecay
+		return
+	}
+	if t.tempo == 0 {
+		if !fromAlternatives {
+			t.tempo = candidate
+			t.pendingTempo = 0
+		} else if t.pendingTempo == 0 || relativeTempoDistance(candidate, t.pendingTempo) > 0.08 {
+			t.pendingTempo = candidate
+			t.pendingSince = features.At
+		} else if features.At-t.pendingSince >= tempoAcquireDuration {
+			t.tempo = candidate
+			t.pendingTempo = 0
+		}
+	} else if relativeTempoDistance(candidate, t.tempo) <= 0.12 {
+		t.tempo = lerp(t.tempo, candidate, 0.12)
+		t.pendingTempo = 0
+	} else {
+		if t.pendingTempo == 0 || relativeTempoDistance(candidate, t.pendingTempo) > 0.08 {
+			t.pendingTempo = candidate
+			t.pendingSince = features.At
+		} else if features.At-t.pendingSince >= tempoSwitchDuration {
+			t.tempo = candidate
+			t.pendingTempo = 0
+			t.nextBeatAt = 0
+		}
+	}
+	if t.tempoConfidence == 0 {
+		t.tempoConfidence = confidence
+	} else {
+		t.tempoConfidence = lerp(t.tempoConfidence, confidence, 0.2)
+	}
+}
+
+func selectTempoCandidate(candidates []TempoCandidate, current float64) (float64, float64) {
+	normalized := make([]TempoCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		candidate.BPM = normalizeCandidateTempo(candidate.BPM)
+		normalized = append(normalized, candidate)
+	}
+	candidates = normalized
+	bestStrength := -1.0
+	for _, candidate := range candidates {
+		if candidate.BPM >= 45 && candidate.BPM <= 200 && candidate.Confidence >= minimumTempoConfidence && candidate.Strength > bestStrength {
+			bestStrength = candidate.Strength
+		}
+	}
+	if bestStrength < 0 {
+		return 0, 0
+	}
+
+	var selected TempoCandidate
+	if current > 0 {
+		bestDistance := math.MaxFloat64
+		for _, candidate := range candidates {
+			if candidate.Confidence < minimumTempoConfidence || candidate.Strength < bestStrength-0.05 {
+				continue
+			}
+			distance := relativeTempoDistance(candidate.BPM, current)
+			if distance < bestDistance {
+				selected, bestDistance = candidate, distance
+			}
+		}
+	} else {
+		// Autocorrelation commonly gives equally strong note subdivisions. Start
+		// from the slowest well-supported musical pulse, while excluding very slow
+		// lags that are more useful as bars than beats.
+		for _, candidate := range candidates {
+			if candidate.Confidence < minimumTempoConfidence || candidate.Strength < bestStrength-0.035 || candidate.BPM < 70 || candidate.BPM > 125 {
+				continue
+			}
+			if selected.BPM == 0 || candidate.BPM < selected.BPM {
+				selected = candidate
+			}
+		}
+	}
+	if selected.BPM == 0 {
+		for _, candidate := range candidates {
+			if candidate.Strength == bestStrength {
+				selected = candidate
+				break
+			}
+		}
+	}
+	return selected.BPM, selected.Confidence
+}
+
+func normalizeCandidateTempo(bpm float64) float64 {
+	for bpm > 0 && bpm < 70 {
+		bpm *= 2
+	}
+	for bpm > 180 {
+		bpm /= 2
+	}
+	return bpm
+}
+
+func relativeTempoDistance(a, b float64) float64 {
+	if a <= 0 || b <= 0 {
+		return math.MaxFloat64
+	}
+	return math.Abs(math.Log2(a / b))
 }
 
 func (t *StateTracker) updateSustained(at time.Duration, rawEnergy float64) bool {

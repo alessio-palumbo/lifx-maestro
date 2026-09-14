@@ -8,6 +8,7 @@ import (
 
 	"lifx-maestro/internal/devices"
 	"lifx-maestro/internal/generation"
+	"lifx-maestro/internal/rendering"
 	"lifx-maestro/internal/timeline"
 )
 
@@ -113,10 +114,10 @@ func TestGeneratorAdvancesAmbientMultiZoneFrameWithoutAccents(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	first := generator.Generate(State{At: 250 * time.Millisecond, Active: true, Sustained: true, Energy: 0.4, Mid: 0.5})
+	first := generator.Generate(State{At: 250 * time.Millisecond, Active: true, Sustained: true, Dynamics: DynamicsBalanced, Energy: 0.4, Mid: 0.5})
 	var latest []timeline.Event
 	for at := 500 * time.Millisecond; at <= 1750*time.Millisecond; at += 250 * time.Millisecond {
-		latest = generator.Generate(State{At: at, Active: true, Sustained: true, Energy: 0.4, Mid: 0.5})
+		latest = generator.Generate(State{At: at, Active: true, Sustained: true, Dynamics: DynamicsBalanced, Energy: 0.4, Mid: 0.5})
 	}
 	if len(first) != 1 || len(latest) != 1 {
 		t.Fatalf("ambient events = %d then %d, want one spatial event each", len(first), len(latest))
@@ -157,6 +158,12 @@ func TestIntensityControlsLiveEventDensity(t *testing.T) {
 		}
 		count := 0
 		for at := 100 * time.Millisecond; at <= time.Second; at += 100 * time.Millisecond {
+			dynamics := DynamicsBalanced
+			if intensity == generation.DynamicsCalm {
+				dynamics = DynamicsCalm
+			} else if intensity == generation.DynamicsEnergetic {
+				dynamics = DynamicsEnergetic
+			}
 			count += len(generator.Generate(State{
 				At:       at,
 				Active:   true,
@@ -164,6 +171,7 @@ func TestIntensityControlsLiveEventDensity(t *testing.T) {
 				High:     0.7,
 				Onset:    true,
 				TempoBPM: 120,
+				Dynamics: dynamics,
 			}))
 		}
 		return count
@@ -174,5 +182,53 @@ func TestIntensityControlsLiveEventDensity(t *testing.T) {
 	energetic := countEvents(generation.DynamicsEnergetic)
 	if !(calm < auto && auto < energetic) {
 		t.Fatalf("event density calm=%d auto=%d energetic=%d", calm, auto, energetic)
+	}
+}
+
+func TestAutomaticDynamicsControlsLiveEventDensity(t *testing.T) {
+	count := func(level DynamicsLevel) int {
+		generator, err := NewGenerator(GeneratorConfig{
+			Intensity: generation.DynamicsAuto,
+			Devices: []devices.DeviceInfo{{
+				ID: "lamp", Capabilities: devices.DeviceCapabilities{Kind: devices.DeviceKindSingleZone},
+			}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		events := 0
+		for at := 100 * time.Millisecond; at <= 2*time.Second; at += 100 * time.Millisecond {
+			events += len(generator.Generate(State{
+				At: at, Active: true, Sustained: true, Energy: 0.5,
+				Onset: true, TempoBPM: 100, Dynamics: level,
+			}))
+		}
+		return events
+	}
+	calm, balanced, energetic := count(DynamicsCalm), count(DynamicsBalanced), count(DynamicsEnergetic)
+	if !(calm < balanced && balanced < energetic) {
+		t.Fatalf("automatic density calm=%d balanced=%d energetic=%d", calm, balanced, energetic)
+	}
+}
+
+func TestGeneratorKeepsEffectsStableUntilSectionChange(t *testing.T) {
+	generator, err := NewGenerator(GeneratorConfig{
+		Intensity: generation.DynamicsAuto,
+		Devices: []devices.DeviceInfo{{
+			ID: "strip", Capabilities: devices.DeviceCapabilities{Kind: devices.DeviceKindMultiZone, ZoneCount: 16},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := State{At: time.Second, Active: true, Sustained: true, Dynamics: DynamicsBalanced, Energy: 0.5}
+	if got := generator.ambientIntent(state); got != rendering.IntentGradient {
+		t.Fatalf("initial ambient intent = %q", got)
+	}
+	state.SectionChange = true
+	generator.Generate(state)
+	state.SectionChange = false
+	if got := generator.ambientIntent(state); got != rendering.IntentSweep {
+		t.Fatalf("next phrase ambient intent = %q", got)
 	}
 }

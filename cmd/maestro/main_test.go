@@ -123,11 +123,17 @@ func TestLiveDiagnosticsExposeDecisionInputs(t *testing.T) {
 		TempoConfidence: 0.71,
 		Active:          true,
 		Sustained:       true,
+		Activity:        0.52,
+		Intensity:       0.67,
+		Dynamics:        livemode.DynamicsEnergetic,
+		Novelty:         0.34,
+		SectionChange:   true,
 		Onset:           true,
 	})
 	line := output.String()
 	for _, expected := range []string{
-		"level=-34.2dB", "floor=-58.6dB", "margin=24.4dB", "tempo= 85.7", "confidence=0.71", "gate=open", "motion=ambient",
+		"level=-34.2dB", "floor=-58.6dB", "margin=24.4dB", "tempo= 85.7", "confidence=0.71", "activity=0.52",
+		"intensity=0.67", "dynamics=energetic", "novelty=0.34", "sections=1", "gate=open", "motion=ambient",
 		"accents=1(onset=1 beat=0)", "generated=3", "sent=0", "replaced=1", "errors=0",
 	} {
 		if !strings.Contains(line, expected) {

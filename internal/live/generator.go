@@ -21,13 +21,13 @@ type GeneratorConfig struct {
 
 type Generator struct {
 	style       styles.Style
+	intensity   generation.DynamicsOverride
 	devices     []devices.DeviceInfo
 	ambientHop  time.Duration
-	accentGap   time.Duration
-	motionScale float64
 	lastAmbient time.Duration
 	lastAccent  time.Duration
 	beatIndex   int
+	phraseIndex int
 	motion      float64
 	lastStateAt time.Duration
 }
@@ -43,17 +43,12 @@ func NewGenerator(config GeneratorConfig) (*Generator, error) {
 	if err := generation.ValidateDynamics(config.Intensity); err != nil {
 		return nil, err
 	}
-	ambientHop, accentGap, motionScale := livePacing(config.Intensity)
-	if config.AmbientHop > 0 {
-		ambientHop = config.AmbientHop
-	}
 	style = liveStyle(style, config.Intensity)
 	return &Generator{
-		style:       style,
-		devices:     config.Devices,
-		ambientHop:  ambientHop,
-		accentGap:   accentGap,
-		motionScale: motionScale,
+		style:      style,
+		intensity:  config.Intensity,
+		devices:    config.Devices,
+		ambientHop: config.AmbientHop,
 	}, nil
 }
 
@@ -63,33 +58,35 @@ func (g *Generator) Generate(state State) []timeline.Event {
 		return nil
 	}
 
-	accent := state.Onset || state.Beat
-	if accent && g.lastAccent > 0 && state.At-g.lastAccent < g.accentGap {
+	if state.SectionChange {
+		g.phraseIndex++
+	}
+	ambientHop, accentGap, _ := g.pacing(state)
+	accent := state.Onset || state.Beat || state.SectionChange
+	if accent && !state.SectionChange && g.lastAccent > 0 && state.At-g.lastAccent < accentGap {
 		accent = false
 	}
 	if !accent && !state.Sustained {
 		return nil
 	}
-	if !accent && state.At-g.lastAmbient < g.ambientHop {
+	if !accent && state.At-g.lastAmbient < ambientHop {
 		return nil
 	}
 	if !accent {
 		g.lastAmbient = state.At
 	}
 
-	kind := rendering.IntentGradient
+	kind := g.ambientIntent(state)
 	color := bandColor(g.style.Palette, state)
-	duration := g.ambientHop * 2
-	brightness := clamp((0.12+state.Energy*0.68)*g.style.BrightnessScale, 0.01, 1)
+	duration := ambientHop * 2
+	brightnessScale := g.style.BrightnessScale * g.autoBrightnessScale(state)
+	brightness := clamp((0.12+state.Energy*0.68)*brightnessScale, 0.01, 1)
 	effectIndex := g.beatIndex
 	if accent {
 		g.lastAccent = state.At
-		kind = rendering.IntentPulse
-		if state.High > state.Low*1.15 && state.High > state.Mid*1.1 {
-			kind = rendering.IntentSweep
-		}
+		kind = g.accentIntent(state)
 		color = g.style.Palette.AccentForBeat(effectIndex)
-		brightness = clamp((0.28+state.Energy*0.82)*g.style.BrightnessScale, 0.01, 1)
+		brightness = clamp((0.28+state.Energy*0.82)*brightnessScale, 0.01, 1)
 		duration = liveAccentDuration(state.TempoBPM, g.style.TransitionAggressiveness)
 		g.beatIndex++
 	}
@@ -125,6 +122,34 @@ func (g *Generator) Generate(state State) []timeline.Event {
 	return events
 }
 
+func (g *Generator) ambientIntent(state State) rendering.IntentKind {
+	switch state.Dynamics {
+	case DynamicsEnergetic:
+		if g.phraseIndex%2 == 1 {
+			return rendering.IntentSweep
+		}
+		return rendering.IntentMatrixWave
+	case DynamicsBalanced:
+		if g.phraseIndex%2 == 1 {
+			return rendering.IntentSweep
+		}
+	}
+	return rendering.IntentGradient
+}
+
+func (g *Generator) accentIntent(state State) rendering.IntentKind {
+	if state.SectionChange {
+		return rendering.IntentPulse
+	}
+	if state.Dynamics == DynamicsEnergetic && g.beatIndex%2 == 1 {
+		return rendering.IntentSweep
+	}
+	if state.High > state.Low*1.15 && state.High > state.Mid*1.1 {
+		return rendering.IntentSweep
+	}
+	return rendering.IntentPulse
+}
+
 func (g *Generator) advanceMotion(state State) float64 {
 	if g.lastStateAt == 0 || state.At <= g.lastStateAt {
 		g.lastStateAt = state.At
@@ -139,8 +164,45 @@ func (g *Generator) advanceMotion(state State) float64 {
 	if bpm < 40 || bpm > 240 {
 		bpm = 90
 	}
-	g.motion += delta.Seconds() * bpm / 60 * g.motionScale
+	_, _, motionScale := g.pacing(state)
+	g.motion += delta.Seconds() * bpm / 60 * motionScale
 	return g.motion
+}
+
+func (g *Generator) pacing(state State) (time.Duration, time.Duration, float64) {
+	var ambient time.Duration
+	var accent time.Duration
+	var motion float64
+	if g.intensity != "" && g.intensity != generation.DynamicsAuto {
+		ambient, accent, motion = livePacing(g.intensity)
+	} else {
+		switch state.Dynamics {
+		case DynamicsEnergetic:
+			ambient, accent, motion = livePacing(generation.DynamicsEnergetic)
+		case DynamicsBalanced:
+			ambient, accent, motion = livePacing(generation.DynamicsBalanced)
+		default:
+			ambient, accent, motion = livePacing(generation.DynamicsCalm)
+		}
+	}
+	if g.ambientHop > 0 {
+		ambient = g.ambientHop
+	}
+	return ambient, accent, motion
+}
+
+func (g *Generator) autoBrightnessScale(state State) float64 {
+	if g.intensity != "" && g.intensity != generation.DynamicsAuto {
+		return 1
+	}
+	switch state.Dynamics {
+	case DynamicsEnergetic:
+		return 1
+	case DynamicsBalanced:
+		return 0.9
+	default:
+		return 0.78
+	}
 }
 
 func livePacing(intensity generation.DynamicsOverride) (time.Duration, time.Duration, float64) {

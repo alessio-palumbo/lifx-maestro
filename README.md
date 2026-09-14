@@ -332,16 +332,29 @@ and the default `auto` use moderate pacing, while `energetic` keeps the denser
 beat/onset response. This visual pacing is deliberately separate from the detected
 tempo because a valid double-time pulse can still be too busy for a calm show.
 
-Tempo is estimated from periodicity in the rolling onset-strength envelope, so
-melodic attacks and rhythmic subdivisions do not each become an assumed beat.
-Candidates need at least `0.45` confidence before they can update the stable
-tempo. Half-time and double-time candidates are folded into a practical
-`70-140 BPM` lighting range, and confidence decays when no reliable candidates
-arrive. Once acquired,
+Tempo is estimated from periodicity in the rolling onset-strength envelope. The
+analyzer reports up to five scored metrical candidates so a note subdivision is
+not automatically treated as the main beat. Go selects a supported main pulse,
+waits 1.2 seconds before its initial lock, favours continuity, and requires a new
+candidate to remain preferable for 2.5 seconds before switching. Very slow and
+very fast octave candidates are folded into a practical lighting range, and
+confidence decays when no reliable candidates arrive. Once acquired,
 the clock continues through ambiguous active sections but expires about 1.5
 seconds after current input and onset evidence disappear; confidence therefore
 describes the freshness of the estimate rather than directly switching rhythmic
-output off. Verbose accent and output counts cover the
+output off.
+
+With `--intensity auto`, Live derives a rolling intensity from energy, onset
+activity, high-frequency energy, pulse confidence, dynamic contrast, and rising
+energy. It classifies that value as `calm`, `balanced`, or `energetic` with a
+faster 1.5-second rise and slower 3-second release. The resulting state controls
+ambient cadence, accent spacing, brightness, and spatial speed. Explicit
+`--intensity` values remain fixed overrides. A causal novelty score compares
+short- and long-term energy plus spectral balance. Sustained novelty can advance
+the effect phrase after a six-second cooldown; it must fall before another section
+change can fire, so effects remain stable rather than changing on every onset.
+
+Verbose accent, section, and output counts cover the
 whole 500 ms log interval rather than only the final analysis sample. `generated`
 counts rendered device events, `sent` counts completed device writes, `replaced`
 counts stale events discarded to protect latency, and `errors` counts failed

@@ -30,8 +30,23 @@ type Features struct {
 	Onset           bool
 	TempoBPM        float64
 	TempoConfidence float64
+	TempoCandidates []TempoCandidate
 	Beat            bool
 }
+
+type TempoCandidate struct {
+	BPM        float64
+	Confidence float64
+	Strength   float64
+}
+
+type DynamicsLevel string
+
+const (
+	DynamicsCalm      DynamicsLevel = "calm"
+	DynamicsBalanced  DynamicsLevel = "balanced"
+	DynamicsEnergetic DynamicsLevel = "energetic"
+)
 
 type State struct {
 	At              time.Duration
@@ -49,6 +64,11 @@ type State struct {
 	TempoConfidence float64
 	Active          bool
 	Sustained       bool
+	Activity        float64
+	Intensity       float64
+	Dynamics        DynamicsLevel
+	Novelty         float64
+	SectionChange   bool
 }
 
 type AudioSource interface {

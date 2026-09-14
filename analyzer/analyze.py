@@ -107,7 +107,7 @@ class LiveWindowAnalyzer:
 
         flux, accepted_transient = self.analyze_onset(samples, sample_rate, at_seconds)
 
-        tempo, confidence = self.estimate_tempo()
+        tempo, confidence, tempo_candidates = self.estimate_tempo()
         if tempo > 0:
             self.tempo = tempo if self.tempo <= 0 else self.tempo * 0.82 + tempo * 0.18
 
@@ -121,6 +121,7 @@ class LiveWindowAnalyzer:
             "onset": bool(accepted_transient),
             "tempo_bpm": round(self.tempo, 3),
             "tempo_confidence": round(confidence, 4),
+            "tempo_candidates": tempo_candidates,
             "beat": bool(accepted_transient and confidence >= 0.35),
         }
 
@@ -171,20 +172,20 @@ class LiveWindowAnalyzer:
     def estimate_tempo(self):
         minimum_history = int(round(2.0 / LIVE_ONSET_FRAME_SECONDS))
         if len(self.flux_history) < minimum_history or len(self.flux_times) != len(self.flux_history):
-            return 0.0, 0.0
+            return 0.0, 0.0, []
 
         times = np.asarray(self.flux_times, dtype=np.float64)
         hops = np.diff(times)
         hop = float(np.median(hops)) if len(hops) else 0.0
         if hop <= 0:
-            return 0.0, 0.0
+            return 0.0, 0.0, []
 
         envelope = np.asarray(self.flux_history, dtype=np.float64)
         envelope = np.maximum(envelope - np.median(envelope), 0.0)
         envelope -= np.mean(envelope)
         energy = float(np.dot(envelope, envelope))
         if energy <= 1e-12:
-            return 0.0, 0.0
+            return 0.0, 0.0, []
 
         # Tempo is periodicity in the onset-strength envelope, not the distance
         # between every adjacent transient. The latter mistakes subdivisions and
@@ -194,14 +195,17 @@ class LiveWindowAnalyzer:
         min_lag = max(1, int(np.floor(60.0 / (max_bpm * hop))))
         max_lag = min(len(envelope) - 2, int(np.ceil(60.0 / (min_bpm * hop))))
         if max_lag < min_lag:
-            return 0.0, 0.0
+            return 0.0, 0.0, []
 
-        correlations = np.correlate(envelope, envelope, mode="full")[len(envelope) - 1:]
-        overlap = np.arange(len(envelope), 0, -1, dtype=np.float64)
-        correlations = correlations / overlap
-        zero_lag = float(correlations[0])
-        if zero_lag <= 1e-12:
-            return 0.0, 0.0
+        correlations = np.zeros(max_lag + 2, dtype=np.float64)
+        correlations[0] = 1.0
+        for lag in range(1, max_lag + 2):
+            left = envelope[:-lag]
+            right = envelope[lag:]
+            denominator = float(np.sqrt(np.dot(left, left) * np.dot(right, right)))
+            if denominator > 1e-12:
+                correlations[lag] = float(np.dot(left, right) / denominator)
+        zero_lag = 1.0
 
         lags = np.arange(min_lag, max_lag + 1)
         scores = correlations[lags] / zero_lag
@@ -220,7 +224,23 @@ class LiveWindowAnalyzer:
 
         support = min(1.0, len(envelope) / max(best_lag * 6.0, 1.0))
         confidence = float(np.clip((peak - 0.08) / 0.42, 0.0, 1.0) * support)
-        return 60.0 / (best_lag * hop), confidence
+        candidates = []
+        ranked = np.argsort(scores)[::-1]
+        for index in ranked:
+            lag = float(lags[index])
+            bpm = 60.0 / (lag * hop)
+            if any(abs(np.log2(bpm / item["bpm"])) < 0.035 for item in candidates):
+                continue
+            candidate_support = min(1.0, len(envelope) / max(lag * 6.0, 1.0))
+            candidate_confidence = float(np.clip((float(scores[index]) - 0.08) / 0.42, 0.0, 1.0) * candidate_support)
+            candidates.append({
+                "bpm": round(bpm, 3),
+                "confidence": round(candidate_confidence, 4),
+                "strength": round(float(scores[index]), 4),
+            })
+            if len(candidates) == 5:
+                break
+        return 60.0 / (best_lag * hop), confidence, candidates
 
     def empty_result(self, at_seconds):
         return {
@@ -233,6 +253,7 @@ class LiveWindowAnalyzer:
             "onset": False,
             "tempo_bpm": self.tempo,
             "tempo_confidence": 0.0,
+            "tempo_candidates": [],
             "beat": False,
         }
 

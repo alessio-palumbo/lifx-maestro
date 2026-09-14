@@ -44,21 +44,74 @@ def stabilize_tempo(candidate):
     return candidate
 
 
+def tempo_distance(a, b):
+    return abs(np.log2(a / b)) if a > 0 and b > 0 else float("inf")
+
+
+def normalize_candidate_tempo(bpm):
+    while 0 < bpm < 70:
+        bpm *= 2
+    while bpm > 180:
+        bpm /= 2
+    return bpm
+
+
+def select_tempo_candidate(row, current):
+    candidates = [
+        {**item, "bpm": normalize_candidate_tempo(item["bpm"])}
+        for item in row.get("tempo_candidates", [])
+        if 45 <= item["bpm"] <= 200 and item["confidence"] >= RELIABLE_CONFIDENCE
+    ]
+    if not candidates:
+        if row["tempo_confidence"] >= RELIABLE_CONFIDENCE and 40 <= row["tempo_bpm"] <= 240:
+            return stabilize_tempo(row["tempo_bpm"]), row["tempo_confidence"]
+        return 0.0, 0.0
+
+    best_strength = max(item["strength"] for item in candidates)
+    if current > 0:
+        eligible = [item for item in candidates if item["strength"] >= best_strength - 0.05]
+        selected = min(eligible, key=lambda item: tempo_distance(item["bpm"], current))
+    else:
+        eligible = [
+            item for item in candidates
+            if item["strength"] >= best_strength - 0.035 and 70 <= item["bpm"] <= 125
+        ]
+        selected = min(eligible, key=lambda item: item["bpm"]) if eligible else max(candidates, key=lambda item: item["strength"])
+    return selected["bpm"], selected["confidence"]
+
+
 def simulate_tracker_clock(rows):
     """Mirror the Go stable-tempo and predicted-beat policy for diagnostics."""
     tempo = 0.0
     confidence = 0.0
     next_beat = None
+    pending_tempo = 0.0
+    pending_since = 0.0
     stable_tempos = []
     stable_confidence = []
     clock_beats = []
 
     for row in rows:
         at = row["at_ms"] / 1000.0
-        raw_confidence = row["tempo_confidence"]
-        if raw_confidence >= RELIABLE_CONFIDENCE and 40 <= row["tempo_bpm"] <= 240:
-            candidate = stabilize_tempo(row["tempo_bpm"])
-            tempo = candidate if tempo <= 0 else tempo * 0.88 + candidate * 0.12
+        candidate, raw_confidence = select_tempo_candidate(row, tempo)
+        if candidate > 0 and raw_confidence >= RELIABLE_CONFIDENCE:
+            if tempo <= 0:
+                if pending_tempo <= 0 or tempo_distance(candidate, pending_tempo) > 0.08:
+                    pending_tempo = candidate
+                    pending_since = at
+                elif at - pending_since >= 1.2:
+                    tempo = candidate
+                    pending_tempo = 0.0
+            elif tempo_distance(candidate, tempo) <= 0.12:
+                tempo = tempo * 0.88 + candidate * 0.12
+                pending_tempo = 0.0
+            elif pending_tempo <= 0 or tempo_distance(candidate, pending_tempo) > 0.08:
+                pending_tempo = candidate
+                pending_since = at
+            elif at - pending_since >= 2.5:
+                tempo = candidate
+                pending_tempo = 0.0
+                next_beat = None
             confidence = raw_confidence if confidence <= 0 else confidence * 0.8 + raw_confidence * 0.2
         else:
             confidence *= 0.985
@@ -71,7 +124,7 @@ def simulate_tracker_clock(rows):
             continue
 
         period = 60.0 / reported
-        observed = bool(row["beat"] and raw_confidence >= RELIABLE_CONFIDENCE)
+        observed = bool(row.get("onset") or (row["beat"] and raw_confidence >= RELIABLE_CONFIDENCE))
         if next_beat is None:
             next_beat = at + period
             if observed:

@@ -129,11 +129,16 @@ type liveFeatureResponse struct {
 	Onset           bool    `json:"onset"`
 	TempoBPM        float64 `json:"tempo_bpm"`
 	TempoConfidence float64 `json:"tempo_confidence"`
-	Beat            bool    `json:"beat"`
+	TempoCandidates []struct {
+		BPM        float64 `json:"bpm"`
+		Confidence float64 `json:"confidence"`
+		Strength   float64 `json:"strength"`
+	} `json:"tempo_candidates"`
+	Beat bool `json:"beat"`
 }
 
 func (r liveFeatureResponse) features() Features {
-	return Features{
+	features := Features{
 		At:              time.Duration(r.AtMS) * time.Millisecond,
 		RMSDB:           r.RMSDB,
 		LowDB:           r.LowDB,
@@ -145,4 +150,10 @@ func (r liveFeatureResponse) features() Features {
 		TempoConfidence: r.TempoConfidence,
 		Beat:            r.Beat,
 	}
+	for _, candidate := range r.TempoCandidates {
+		features.TempoCandidates = append(features.TempoCandidates, TempoCandidate{
+			BPM: candidate.BPM, Confidence: candidate.Confidence, Strength: candidate.Strength,
+		})
+	}
+	return features
 }

@@ -177,6 +177,64 @@ func TestStabilizeTempoKeepsOctaveNearCurrentPulse(t *testing.T) {
 	}
 }
 
+func TestSelectTempoCandidatePrefersSlowerSupportedMainPulse(t *testing.T) {
+	candidates := []TempoCandidate{
+		{BPM: 120, Confidence: 1, Strength: 0.972},
+		{BPM: 80, Confidence: 1, Strength: 0.966},
+		{BPM: 60, Confidence: 1, Strength: 0.961},
+		{BPM: 96, Confidence: 1, Strength: 0.953},
+	}
+	bpm, _ := selectTempoCandidate(candidates, 0)
+	if bpm != 80 {
+		t.Fatalf("initial main pulse = %.1f BPM, want 80", bpm)
+	}
+}
+
+func TestSelectTempoCandidatePreservesEstablishedPulse(t *testing.T) {
+	candidates := []TempoCandidate{
+		{BPM: 120, Confidence: 0.9, Strength: 0.8},
+		{BPM: 80, Confidence: 0.8, Strength: 0.77},
+	}
+	bpm, _ := selectTempoCandidate(candidates, 119)
+	if bpm != 120 {
+		t.Fatalf("continued pulse = %.1f BPM, want 120", bpm)
+	}
+}
+
+func TestStateTrackerRequiresPersistentAlternativeBeforeTempoSwitch(t *testing.T) {
+	tracker := NewStateTracker(DefaultTrackerConfig())
+	features := Features{
+		At:              time.Second,
+		RMSDB:           -20,
+		TempoCandidates: []TempoCandidate{{BPM: 90, Confidence: 0.9, Strength: 0.8}},
+	}
+	state := tracker.Update(features)
+	if state.TempoBPM != 0 {
+		t.Fatalf("tempo locked before acquisition at %.1f", state.TempoBPM)
+	}
+	for i := 0; i < 13; i++ {
+		features.At += 100 * time.Millisecond
+		state = tracker.Update(features)
+	}
+	if state.TempoBPM != 90 {
+		t.Fatalf("acquired tempo = %.1f, want 90", state.TempoBPM)
+	}
+
+	features.At += 100 * time.Millisecond
+	features.TempoCandidates = []TempoCandidate{{BPM: 120, Confidence: 0.95, Strength: 0.9}}
+	state = tracker.Update(features)
+	if state.TempoBPM != 90 {
+		t.Fatalf("one alternative changed tempo to %.1f", state.TempoBPM)
+	}
+	for i := 0; i < 27; i++ {
+		features.At += 100 * time.Millisecond
+		state = tracker.Update(features)
+	}
+	if state.TempoBPM != 120 {
+		t.Fatalf("persistent alternative left tempo at %.1f, want 120", state.TempoBPM)
+	}
+}
+
 func TestStateTrackerContinuesBeatClockBetweenReliableObservations(t *testing.T) {
 	tracker := NewStateTracker(DefaultTrackerConfig())
 	state := tracker.Update(Features{
@@ -298,5 +356,62 @@ func TestStateTrackerStopsPredictedClockAfterInputEnds(t *testing.T) {
 	}
 	if beatsAfterHold != 0 {
 		t.Fatalf("predicted beats after hold expired = %d", beatsAfterHold)
+	}
+}
+
+func TestStateTrackerAutomaticDynamicsUsesHysteresis(t *testing.T) {
+	tracker := NewStateTracker(DefaultTrackerConfig())
+	if tracker.dynamics != DynamicsCalm {
+		t.Fatalf("initial dynamics = %q, want calm", tracker.dynamics)
+	}
+
+	var dynamics DynamicsLevel
+	for i := 0; i < 60; i++ {
+		tracker.energy = 1
+		tracker.high = 1
+		tracker.tempoConfidence = 1
+		_, _, dynamics, _, _ = tracker.updateInterpretation(time.Duration(i)*100*time.Millisecond, i%3 == 0, true)
+	}
+	if dynamics != DynamicsEnergetic {
+		t.Fatalf("sustained high intensity dynamics = %q, want energetic", dynamics)
+	}
+
+	for i := 60; i < 75; i++ {
+		tracker.energy = 0
+		tracker.high = 0
+		tracker.tempoConfidence = 0
+		_, _, dynamics, _, _ = tracker.updateInterpretation(time.Duration(i)*100*time.Millisecond, false, false)
+	}
+	if dynamics == DynamicsCalm {
+		t.Fatal("dynamics fell to calm without the slower release hysteresis")
+	}
+	for i := 75; i < 180; i++ {
+		tracker.energy = 0
+		tracker.high = 0
+		_, _, dynamics, _, _ = tracker.updateInterpretation(time.Duration(i)*100*time.Millisecond, false, false)
+	}
+	if dynamics != DynamicsCalm {
+		t.Fatalf("quiet dynamics = %q, want calm", dynamics)
+	}
+}
+
+func TestStateTrackerSectionNoveltyRequiresRearmAndCooldown(t *testing.T) {
+	tracker := NewStateTracker(DefaultTrackerConfig())
+	tracker.novelty = 0.5
+	_, _, _, _, changed := tracker.updateInterpretation(6*time.Second, false, true)
+	if !changed {
+		t.Fatal("sustained novelty did not mark a section change")
+	}
+	tracker.novelty = 0.5
+	_, _, _, _, changed = tracker.updateInterpretation(7*time.Second, false, true)
+	if changed {
+		t.Fatal("novelty retriggered without rearming")
+	}
+	tracker.novelty = 0.1
+	tracker.updateInterpretation(8*time.Second, false, true)
+	tracker.novelty = 0.5
+	_, _, _, _, changed = tracker.updateInterpretation(13*time.Second, false, true)
+	if !changed {
+		t.Fatal("rearmed novelty did not trigger after cooldown")
 	}
 }
