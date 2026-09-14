@@ -54,6 +54,7 @@ type State struct {
 	NoiseFloorDB    float64
 	MarginDB        float64
 	Energy          float64
+	Presence        float64
 	Low             float64
 	Mid             float64
 	High            float64

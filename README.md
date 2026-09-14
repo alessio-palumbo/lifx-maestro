@@ -307,13 +307,16 @@ onset events, and a causal rolling tempo estimate. Energy and bands use the full
 500 ms window. Onsets use only the newest audio, split into 25 ms frames, with an
 adaptive upper threshold, lower re-arm threshold, and 250 ms refractory period.
 This prevents one impact from being detected again in each overlapping window.
-Go maintains the evolving noise floor, smoothed energy, and generator decisions. Each frequency band has
-its own adaptive floor. Steady ambience is calibrated during the first three
+Go maintains the evolving noise floor, smoothed energy, signal presence, and
+generator decisions. Each frequency band has its own adaptive floor. Steady ambience is calibrated during the first three
 seconds. After that, quiet observations can lower a floor and near-baseline noise
 can raise it slowly, but clearly active audio and detected transients freeze upward
 adaptation. This prevents sustained music from gradually teaching Live that the
 song itself is background noise. A smoothed overall energy of `0.015` opens the
-generation gate; individual low, mid, or high bands may be zero without closing it.
+generation gate. Corroborating activity in at least two frequency bands can also
+hold it open through quiet passages, with a 900 ms release, without changing the
+reported amplitude energy. Requiring two bands prevents one steady narrow-band
+noise source from driving the show.
 Each frequency band also maintains a slowly moving upper ceiling, preventing one
 band from remaining pinned at `1.00` throughout a loud section.
 
@@ -354,7 +357,9 @@ short- and long-term energy plus spectral balance. Sustained novelty can advance
 the effect phrase after a six-second cooldown; it must fall before another section
 change can fire, so effects remain stable rather than changing on every onset.
 
-Verbose accent, section, and output counts cover the
+Verbose `energy` is the normalized full-window amplitude, while `presence` also
+includes corroborated spectral evidence and controls whether generation remains
+active. Accent, section, and output counts cover the
 whole 500 ms log interval rather than only the final analysis sample. `generated`
 counts rendered device events, `sent` counts completed device writes, `replaced`
 counts stale events discarded to protect latency, and `errors` counts failed

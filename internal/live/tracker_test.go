@@ -107,6 +107,87 @@ func TestStateTrackerSmoothsEnergyRelease(t *testing.T) {
 	}
 }
 
+func TestStateTrackerKeepsSpectrallySupportedQuietMusicActive(t *testing.T) {
+	tracker := NewStateTracker(DefaultTrackerConfig())
+	for i := 0; i < 80; i++ {
+		tracker.Update(Features{
+			At:     time.Duration(i) * 50 * time.Millisecond,
+			RMSDB:  -72,
+			LowDB:  -72,
+			MidDB:  -72,
+			HighDB: -72,
+		})
+	}
+	baseline := tracker.noiseFloorDB
+	var state State
+	for i := 80; i < 140; i++ {
+		state = tracker.Update(Features{
+			At:     time.Duration(i) * 50 * time.Millisecond,
+			RMSDB:  -72,
+			LowDB:  -71,
+			MidDB:  -54,
+			HighDB: -52,
+		})
+	}
+
+	if state.Energy != 0 {
+		t.Fatalf("quiet spectral passage energy = %.3f, want honest zero amplitude energy", state.Energy)
+	}
+	if !state.Active || !state.Sustained || state.Presence < minimumSpectralPresence {
+		t.Fatalf("quiet spectral passage was not kept present: %+v", state)
+	}
+	if tracker.noiseFloorDB-baseline > 0.1 {
+		t.Fatalf("spectral passage moved noise floor from %.2f to %.2f", baseline, tracker.noiseFloorDB)
+	}
+}
+
+func TestStateTrackerDoesNotOpenForOneSteadyBand(t *testing.T) {
+	tracker := NewStateTracker(DefaultTrackerConfig())
+	for i := 0; i < 80; i++ {
+		tracker.Update(Features{At: time.Duration(i) * 50 * time.Millisecond, RMSDB: -72, LowDB: -72, MidDB: -72, HighDB: -72})
+	}
+	var state State
+	for i := 80; i < 140; i++ {
+		state = tracker.Update(Features{
+			At:     time.Duration(i) * 50 * time.Millisecond,
+			RMSDB:  -72,
+			LowDB:  -72,
+			MidDB:  -72,
+			HighDB: -42,
+		})
+	}
+	if state.Active || state.Sustained {
+		t.Fatalf("one steady spectral band opened the gate: %+v", state)
+	}
+}
+
+func TestStateTrackerBridgesBriefQuietPassageAndRecovers(t *testing.T) {
+	tracker := NewStateTracker(DefaultTrackerConfig())
+	for i := 0; i < 80; i++ {
+		tracker.Update(Features{At: time.Duration(i) * 50 * time.Millisecond, RMSDB: -72, LowDB: -72, MidDB: -72, HighDB: -72})
+	}
+	music := func(at time.Duration) State {
+		return tracker.Update(Features{At: at, RMSDB: -72, LowDB: -70, MidDB: -53, HighDB: -51})
+	}
+	var state State
+	for i := 80; i < 100; i++ {
+		state = music(time.Duration(i) * 50 * time.Millisecond)
+	}
+	if !state.Sustained {
+		t.Fatal("spectral input did not become sustained")
+	}
+	for i := 100; i < 112; i++ {
+		state = tracker.Update(Features{At: time.Duration(i) * 50 * time.Millisecond, RMSDB: -80, LowDB: -80, MidDB: -80, HighDB: -80})
+	}
+	if !state.Active || !state.Sustained {
+		t.Fatalf("brief quiet passage stopped motion: %+v", state)
+	}
+	state = music(112 * 50 * time.Millisecond)
+	if !state.Active || !state.Sustained {
+		t.Fatalf("spectral input did not recover immediately: %+v", state)
+	}
+}
+
 func TestStateTrackerReportsInputMargin(t *testing.T) {
 	tracker := NewStateTracker(DefaultTrackerConfig())
 	state := tracker.Update(Features{At: time.Second, RMSDB: -30, LowDB: -35, MidDB: -32, HighDB: -40})

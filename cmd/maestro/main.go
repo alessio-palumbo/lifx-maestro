@@ -269,8 +269,8 @@ func (d *liveDiagnostics) Observe(state livemode.State) {
 	sent := dispatch.Sent - d.lastDispatch.Sent
 	replaced := dispatch.Replaced - d.lastDispatch.Replaced + uint64(d.droppedEvents)
 	errors := dispatch.Errors - d.lastDispatch.Errors
-	fmt.Fprintf(d.out, "[live %s] level=%5.1fdB floor=%5.1fdB margin=%4.1fdB energy=%.2f low=%.2f mid=%.2f high=%.2f tempo=%5.1f confidence=%.2f activity=%.2f intensity=%.2f dynamics=%s novelty=%.2f sections=%d gate=%s motion=%s accents=%d(onset=%d beat=%d) generated=%d sent=%d replaced=%d errors=%d\n",
-		playback.FormatOffset(state.At), state.InputDB, state.NoiseFloorDB, state.MarginDB, state.Energy, state.Low, state.Mid, state.High, state.TempoBPM, state.TempoConfidence, state.Activity, state.Intensity, state.Dynamics, state.Novelty, d.sections, gate, motion, d.accents, d.onsets, d.beats, d.generated, sent, replaced, errors)
+	fmt.Fprintf(d.out, "[live %s] level=%5.1fdB floor=%5.1fdB margin=%4.1fdB energy=%.2f presence=%.2f low=%.2f mid=%.2f high=%.2f tempo=%5.1f confidence=%.2f activity=%.2f intensity=%.2f dynamics=%s novelty=%.2f sections=%d gate=%s motion=%s accents=%d(onset=%d beat=%d) generated=%d sent=%d replaced=%d errors=%d\n",
+		playback.FormatOffset(state.At), state.InputDB, state.NoiseFloorDB, state.MarginDB, state.Energy, state.Presence, state.Low, state.Mid, state.High, state.TempoBPM, state.TempoConfidence, state.Activity, state.Intensity, state.Dynamics, state.Novelty, d.sections, gate, motion, d.accents, d.onsets, d.beats, d.generated, sent, replaced, errors)
 	d.lastDispatch = dispatch
 	d.accents = 0
 	d.onsets = 0

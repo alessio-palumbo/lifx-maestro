@@ -65,6 +65,7 @@ type StateTracker struct {
 	bandCeilingDB   [3]float64
 	fluxBaseline    float64
 	energy          float64
+	presence        float64
 	low             float64
 	mid             float64
 	high            float64
@@ -78,6 +79,7 @@ type StateTracker struct {
 	clockHoldUntil  time.Duration
 	activeSince     time.Duration
 	sustainedUntil  time.Duration
+	presenceUntil   time.Duration
 	rawActive       bool
 	onsetTimes      []time.Duration
 	shortEnergy     float64
@@ -100,6 +102,9 @@ const (
 	noiseCalibrationRate      = 0.08
 	noiseTrackingCeiling      = 0.05
 	MinimumActiveEnergy       = 0.015
+	minimumSpectralPresence   = 0.08
+	rawSpectralPresence       = 0.03
+	presenceReleaseDuration   = 900 * time.Millisecond
 	minimumTempoConfidence    = 0.45
 	tempoConfidenceDecay      = 0.985
 	bandCeilingHeadroomDB     = 3.0
@@ -146,21 +151,29 @@ func (t *StateTracker) Update(features Features) State {
 	// Quiet observations can lower the floor quickly. Louder observations only
 	// raise while the input is close to the known baseline. Otherwise sustained
 	// music would eventually be learned as ambient noise and close its own gate.
-	calibrating := !t.signalSeen && features.At-t.startedAt < noiseCalibrationDuration
 	rawEnergy := gatedLevel(features.RMSDB, t.noiseFloorDB, t.config)
 	rawLow := gatedLevel(features.LowDB, t.bandFloorDB[0], t.config)
 	rawMid := gatedLevel(features.MidDB, t.bandFloorDB[1], t.config)
 	rawHigh := gatedLevel(features.HighDB, t.bandFloorDB[2], t.config)
-	t.noiseFloorDB = t.updateFloor(t.noiseFloorDB, features.RMSDB, rawEnergy, transient, calibrating)
-	t.bandFloorDB[0] = t.updateFloor(t.bandFloorDB[0], features.LowDB, rawLow, transient, calibrating)
-	t.bandFloorDB[1] = t.updateFloor(t.bandFloorDB[1], features.MidDB, rawMid, transient, calibrating)
-	t.bandFloorDB[2] = t.updateFloor(t.bandFloorDB[2], features.HighDB, rawHigh, transient, calibrating)
+	spectralEvidence := secondStrongest(rawLow, rawMid, rawHigh) >= rawSpectralPresence
+	presenceEvidence := rawEnergy >= MinimumActiveEnergy || spectralEvidence || (features.Onset && rawEnergy > 0)
+	calibrating := !t.signalSeen && features.At-t.startedAt < noiseCalibrationDuration
+	withinPresenceRelease := t.presenceUntil > 0 && features.At <= t.presenceUntil
+	withinSustainedRelease := t.sustainedUntil > 0 && features.At <= t.sustainedUntil
+	protectFloor := !calibrating && (presenceEvidence || withinPresenceRelease || withinSustainedRelease)
+	t.noiseFloorDB = t.updateFloor(t.noiseFloorDB, features.RMSDB, rawEnergy, protectFloor, calibrating)
+	t.bandFloorDB[0] = t.updateFloor(t.bandFloorDB[0], features.LowDB, rawLow, protectFloor, calibrating)
+	t.bandFloorDB[1] = t.updateFloor(t.bandFloorDB[1], features.MidDB, rawMid, protectFloor, calibrating)
+	t.bandFloorDB[2] = t.updateFloor(t.bandFloorDB[2], features.HighDB, rawHigh, protectFloor, calibrating)
 	t.bandCeilingDB[0] = updateBandCeiling(t.bandCeilingDB[0], features.LowDB, t.bandFloorDB[0], t.config)
 	t.bandCeilingDB[1] = updateBandCeiling(t.bandCeilingDB[1], features.MidDB, t.bandFloorDB[1], t.config)
 	t.bandCeilingDB[2] = updateBandCeiling(t.bandCeilingDB[2], features.HighDB, t.bandFloorDB[2], t.config)
 
 	// Re-evaluate against any baseline adjustment made during quiet calibration.
 	rawEnergy = gatedLevel(features.RMSDB, t.noiseFloorDB, t.config)
+	rawLow = gatedLevel(features.LowDB, t.bandFloorDB[0], t.config)
+	rawMid = gatedLevel(features.MidDB, t.bandFloorDB[1], t.config)
+	rawHigh = gatedLevel(features.HighDB, t.bandFloorDB[2], t.config)
 	t.energy = smooth(t.energy, rawEnergy, t.config.Attack, t.config.Release)
 	t.low = smooth(t.low, bandLevel(features.LowDB, t.bandFloorDB[0], t.bandCeilingDB[0], t.config), t.config.Attack, t.config.Release)
 	t.mid = smooth(t.mid, bandLevel(features.MidDB, t.bandFloorDB[1], t.bandCeilingDB[1], t.config), t.config.Attack, t.config.Release)
@@ -170,7 +183,12 @@ func (t *StateTracker) Update(features Features) State {
 	if onset {
 		t.lastOnset = features.At
 	}
-	sustained := t.updateSustained(features.At, rawEnergy)
+	spectralPresence := secondStrongest(t.low, t.mid, t.high)
+	presenceInput := math.Max(t.energy, spectralPresence)
+	t.presence = smooth(t.presence, presenceInput, t.config.Attack, t.config.Release)
+	active := t.updatePresence(features.At, onset)
+	continuousInput := rawEnergy >= sustainedInputMinimum || secondStrongest(rawLow, rawMid, rawHigh) >= rawSpectralPresence
+	sustained := t.updateSustained(features.At, continuousInput)
 	fluxRate := 0.04
 	if features.OnsetStrength > t.fluxBaseline {
 		fluxRate = 0.006
@@ -183,7 +201,7 @@ func (t *StateTracker) Update(features Features) State {
 	// an older clock is less disruptive than dropping rhythmic output entirely.
 	reportedTempo := t.tempo
 	observedBeat := onset || (features.Beat && features.TempoConfidence >= minimumTempoConfidence)
-	beat := t.updateBeatClock(features.At, reportedTempo, observedBeat, sustained && rawEnergy >= sustainedInputMinimum)
+	beat := t.updateBeatClock(features.At, reportedTempo, observedBeat, sustained && continuousInput)
 	activity, intensity, dynamics, novelty, sectionChange := t.updateInterpretation(features.At, onset, sustained)
 
 	trend := clamp(t.energy-t.lastEnergy, -1, 1)
@@ -194,6 +212,7 @@ func (t *StateTracker) Update(features Features) State {
 		NoiseFloorDB:    t.noiseFloorDB,
 		MarginDB:        features.RMSDB - t.noiseFloorDB,
 		Energy:          t.energy,
+		Presence:        t.presence,
 		Low:             t.low,
 		Mid:             t.mid,
 		High:            t.high,
@@ -202,7 +221,7 @@ func (t *StateTracker) Update(features Features) State {
 		Beat:            beat,
 		TempoBPM:        reportedTempo,
 		TempoConfidence: clamp(t.tempoConfidence, 0, 1),
-		Active:          t.energy >= MinimumActiveEnergy,
+		Active:          active,
 		Sustained:       sustained,
 		Activity:        activity,
 		Intensity:       intensity,
@@ -401,8 +420,16 @@ func relativeTempoDistance(a, b float64) float64 {
 	return math.Abs(math.Log2(a / b))
 }
 
-func (t *StateTracker) updateSustained(at time.Duration, rawEnergy float64) bool {
-	if rawEnergy >= sustainedInputMinimum {
+func (t *StateTracker) updatePresence(at time.Duration, onset bool) bool {
+	evidence := t.energy >= MinimumActiveEnergy || secondStrongest(t.low, t.mid, t.high) >= minimumSpectralPresence || onset
+	if evidence {
+		t.presenceUntil = at + presenceReleaseDuration
+	}
+	return t.presenceUntil > 0 && at <= t.presenceUntil
+}
+
+func (t *StateTracker) updateSustained(at time.Duration, continuous bool) bool {
+	if continuous {
 		if !t.rawActive {
 			t.activeSince = at
 			t.rawActive = true
@@ -502,16 +529,29 @@ func stabilizeTempo(candidate float64) float64 {
 	return candidate
 }
 
-func (t *StateTracker) updateFloor(current, observed, gated float64, transient, calibrating bool) float64 {
+func (t *StateTracker) updateFloor(current, observed, gated float64, protected, calibrating bool) float64 {
 	rate := t.config.NoiseRise
 	if observed < current {
 		rate = t.config.NoiseFall
 	} else if calibrating {
 		rate = noiseCalibrationRate
-	} else if transient || gated > noiseTrackingCeiling {
+	} else if protected || gated > noiseTrackingCeiling {
 		rate = 0
 	}
 	return lerp(current, observed, rate)
+}
+
+func secondStrongest(a, b, c float64) float64 {
+	if a > b {
+		a, b = b, a
+	}
+	if b > c {
+		b = c
+	}
+	if a > b {
+		b = a
+	}
+	return b
 }
 
 func gatedLevel(valueDB, noiseFloorDB float64, config TrackerConfig) float64 {

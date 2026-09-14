@@ -116,6 +116,7 @@ func TestLiveDiagnosticsExposeDecisionInputs(t *testing.T) {
 		NoiseFloorDB:    -58.6,
 		MarginDB:        24.4,
 		Energy:          0.62,
+		Presence:        0.73,
 		Low:             0.22,
 		Mid:             0.62,
 		High:            0.92,
@@ -132,7 +133,7 @@ func TestLiveDiagnosticsExposeDecisionInputs(t *testing.T) {
 	})
 	line := output.String()
 	for _, expected := range []string{
-		"level=-34.2dB", "floor=-58.6dB", "margin=24.4dB", "tempo= 85.7", "confidence=0.71", "activity=0.52",
+		"level=-34.2dB", "floor=-58.6dB", "margin=24.4dB", "energy=0.62", "presence=0.73", "tempo= 85.7", "confidence=0.71", "activity=0.52",
 		"intensity=0.67", "dynamics=energetic", "novelty=0.34", "sections=1", "gate=open", "motion=ambient",
 		"accents=1(onset=1 beat=0)", "generated=3", "sent=0", "replaced=1", "errors=0",
 	} {
