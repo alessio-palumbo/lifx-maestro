@@ -308,8 +308,11 @@ onset events, and a causal rolling tempo estimate. Energy and bands use the full
 adaptive upper threshold, lower re-arm threshold, and 250 ms refractory period.
 This prevents one impact from being detected again in each overlapping window.
 Go maintains the evolving noise floor, smoothed energy, signal presence, and
-generator decisions. Each frequency band has its own adaptive floor. Steady ambience is calibrated during the first three
-seconds. After that, quiet observations can lower a floor and near-baseline noise
+generator decisions. Each frequency band has its own adaptive floor. Startup uses
+a provisional 750 ms observation period, then calibrates steady ambience from the
+lower envelope of the first three seconds. Explicit onsets or meaningful level and
+spectral variation stop upward calibration, so music that was already playing is
+less likely to become the baseline. After startup, quiet observations can lower a floor and near-baseline noise
 can raise it slowly, but clearly active audio and detected transients freeze upward
 adaptation. This prevents sustained music from gradually teaching Live that the
 song itself is background noise. A smoothed overall energy of `0.015` opens the

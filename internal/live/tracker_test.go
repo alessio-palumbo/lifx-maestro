@@ -23,6 +23,81 @@ func TestStateTrackerGatesSteadyRoomNoise(t *testing.T) {
 	}
 }
 
+func TestStateTrackerDoesNotCalibrateAlreadyPlayingMusicAsNoise(t *testing.T) {
+	tracker := NewStateTracker(DefaultTrackerConfig())
+	var state State
+	for i := 0; i < 80; i++ {
+		level := -42.0
+		if i%8 < 4 {
+			level = -37
+		}
+		state = tracker.Update(Features{
+			At:            time.Duration(i) * 50 * time.Millisecond,
+			RMSDB:         level,
+			LowDB:         level - 4,
+			MidDB:         level - 1,
+			HighDB:        level - 7,
+			OnsetStrength: 0.01,
+		})
+	}
+
+	if !state.Active || state.Energy < 0.25 {
+		t.Fatalf("already-playing music was absorbed by startup calibration: %+v", state)
+	}
+	if tracker.noiseFloorDB > -55 {
+		t.Fatalf("already-playing music raised startup floor to %.2f", tracker.noiseFloorDB)
+	}
+}
+
+func TestStateTrackerExplicitStartupOnsetStopsCalibration(t *testing.T) {
+	tracker := NewStateTracker(DefaultTrackerConfig())
+	var state State
+	for i := 0; i < 80; i++ {
+		state = tracker.Update(Features{
+			At:            time.Duration(i) * 50 * time.Millisecond,
+			RMSDB:         -38,
+			LowDB:         -43,
+			MidDB:         -39,
+			HighDB:        -46,
+			OnsetStrength: 0.01,
+			Onset:         i == 4,
+		})
+	}
+
+	if !state.Active {
+		t.Fatalf("music following a startup onset was gated: %+v", state)
+	}
+	if tracker.noiseFloorDB > -55 {
+		t.Fatalf("startup onset did not protect floor: %.2f", tracker.noiseFloorDB)
+	}
+}
+
+func TestStateTrackerStartupCalibrationUsesLowEnvelope(t *testing.T) {
+	tracker := NewStateTracker(DefaultTrackerConfig())
+	var state State
+	for i := 0; i < 200; i++ {
+		level := -48.0
+		if i < 8 {
+			level = -46
+		}
+		state = tracker.Update(Features{
+			At:            time.Duration(i) * 50 * time.Millisecond,
+			RMSDB:         level,
+			LowDB:         level - 2,
+			MidDB:         level - 1,
+			HighDB:        level - 5,
+			OnsetStrength: 0.002,
+		})
+	}
+
+	if state.Active || state.Energy > MinimumActiveEnergy {
+		t.Fatalf("steady ambience was not gated after startup outliers: %+v", state)
+	}
+	if tracker.noiseFloorDB < -50 {
+		t.Fatalf("low-envelope calibration did not learn steady ambience: %.2f", tracker.noiseFloorDB)
+	}
+}
+
 func TestTrackerConfigForSensitivityAdjustsNoiseMargin(t *testing.T) {
 	low, err := TrackerConfigForSensitivity("low")
 	if err != nil {

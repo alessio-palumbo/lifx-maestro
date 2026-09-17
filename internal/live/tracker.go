@@ -3,6 +3,7 @@ package live
 import (
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"time"
 )
@@ -95,30 +96,35 @@ type StateTracker struct {
 	initialized     bool
 	startedAt       time.Duration
 	signalSeen      bool
+	startupLevels   [][4]float64
 }
 
 const (
-	noiseCalibrationDuration  = 3 * time.Second
-	noiseCalibrationRate      = 0.08
-	noiseTrackingCeiling      = 0.05
-	MinimumActiveEnergy       = 0.015
-	minimumSpectralPresence   = 0.08
-	rawSpectralPresence       = 0.03
-	presenceReleaseDuration   = 900 * time.Millisecond
-	minimumTempoConfidence    = 0.45
-	tempoConfidenceDecay      = 0.985
-	bandCeilingHeadroomDB     = 3.0
-	bandCeilingMinimumRangeDB = 12.0
-	bandCeilingAttack         = 0.35
-	bandCeilingRelease        = 0.002
-	sustainedInputMinimum     = 0.03
-	sustainedAttackDuration   = 650 * time.Millisecond
-	sustainedReleaseDuration  = 800 * time.Millisecond
-	beatClockHoldDuration     = 1500 * time.Millisecond
-	tempoSwitchDuration       = 2500 * time.Millisecond
-	tempoAcquireDuration      = 1200 * time.Millisecond
-	activityWindowDuration    = 4 * time.Second
-	sectionChangeCooldown     = 6 * time.Second
+	noiseCalibrationDuration   = 3 * time.Second
+	noiseObservationDuration   = 750 * time.Millisecond
+	noiseCalibrationRate       = 0.08
+	noiseCalibrationPercentile = 0.20
+	startupLevelVariationDB    = 3.0
+	startupBandVariationDB     = 6.0
+	noiseTrackingCeiling       = 0.05
+	MinimumActiveEnergy        = 0.015
+	minimumSpectralPresence    = 0.08
+	rawSpectralPresence        = 0.03
+	presenceReleaseDuration    = 900 * time.Millisecond
+	minimumTempoConfidence     = 0.45
+	tempoConfidenceDecay       = 0.985
+	bandCeilingHeadroomDB      = 3.0
+	bandCeilingMinimumRangeDB  = 12.0
+	bandCeilingAttack          = 0.35
+	bandCeilingRelease         = 0.002
+	sustainedInputMinimum      = 0.03
+	sustainedAttackDuration    = 650 * time.Millisecond
+	sustainedReleaseDuration   = 800 * time.Millisecond
+	beatClockHoldDuration      = 1500 * time.Millisecond
+	tempoSwitchDuration        = 2500 * time.Millisecond
+	tempoAcquireDuration       = 1200 * time.Millisecond
+	activityWindowDuration     = 4 * time.Second
+	sectionChangeCooldown      = 6 * time.Second
 )
 
 func NewStateTracker(config TrackerConfig) *StateTracker {
@@ -144,7 +150,11 @@ func (t *StateTracker) Update(features Features) State {
 	}
 	onsetThreshold := math.Max(t.config.OnsetMinimum, t.fluxBaseline*t.config.OnsetRatio)
 	transient := features.OnsetStrength >= onsetThreshold
-	if transient {
+	startupElapsed := features.At - t.startedAt
+	if startupElapsed < noiseCalibrationDuration {
+		t.observeStartup(features)
+	}
+	if transient || features.Onset || (startupElapsed >= noiseObservationDuration && t.startupVaries()) {
 		t.signalSeen = true
 	}
 
@@ -157,14 +167,18 @@ func (t *StateTracker) Update(features Features) State {
 	rawHigh := gatedLevel(features.HighDB, t.bandFloorDB[2], t.config)
 	spectralEvidence := secondStrongest(rawLow, rawMid, rawHigh) >= rawSpectralPresence
 	presenceEvidence := rawEnergy >= MinimumActiveEnergy || spectralEvidence || (features.Onset && rawEnergy > 0)
-	calibrating := !t.signalSeen && features.At-t.startedAt < noiseCalibrationDuration
+	calibrating := !t.signalSeen && startupElapsed < noiseCalibrationDuration
 	withinPresenceRelease := t.presenceUntil > 0 && features.At <= t.presenceUntil
 	withinSustainedRelease := t.sustainedUntil > 0 && features.At <= t.sustainedUntil
 	protectFloor := !calibrating && (presenceEvidence || withinPresenceRelease || withinSustainedRelease)
-	t.noiseFloorDB = t.updateFloor(t.noiseFloorDB, features.RMSDB, rawEnergy, protectFloor, calibrating)
-	t.bandFloorDB[0] = t.updateFloor(t.bandFloorDB[0], features.LowDB, rawLow, protectFloor, calibrating)
-	t.bandFloorDB[1] = t.updateFloor(t.bandFloorDB[1], features.MidDB, rawMid, protectFloor, calibrating)
-	t.bandFloorDB[2] = t.updateFloor(t.bandFloorDB[2], features.HighDB, rawHigh, protectFloor, calibrating)
+	floorLevels := [4]float64{features.RMSDB, features.LowDB, features.MidDB, features.HighDB}
+	if calibrating {
+		floorLevels = t.startupFloorLevels(startupElapsed)
+	}
+	t.noiseFloorDB = t.updateFloor(t.noiseFloorDB, floorLevels[0], rawEnergy, protectFloor, calibrating)
+	t.bandFloorDB[0] = t.updateFloor(t.bandFloorDB[0], floorLevels[1], rawLow, protectFloor, calibrating)
+	t.bandFloorDB[1] = t.updateFloor(t.bandFloorDB[1], floorLevels[2], rawMid, protectFloor, calibrating)
+	t.bandFloorDB[2] = t.updateFloor(t.bandFloorDB[2], floorLevels[3], rawHigh, protectFloor, calibrating)
 	t.bandCeilingDB[0] = updateBandCeiling(t.bandCeilingDB[0], features.LowDB, t.bandFloorDB[0], t.config)
 	t.bandCeilingDB[1] = updateBandCeiling(t.bandCeilingDB[1], features.MidDB, t.bandFloorDB[1], t.config)
 	t.bandCeilingDB[2] = updateBandCeiling(t.bandCeilingDB[2], features.HighDB, t.bandFloorDB[2], t.config)
@@ -229,6 +243,59 @@ func (t *StateTracker) Update(features Features) State {
 		Novelty:         novelty,
 		SectionChange:   sectionChange,
 	}
+}
+
+func (t *StateTracker) observeStartup(features Features) {
+	t.startupLevels = append(t.startupLevels, [4]float64{
+		features.RMSDB,
+		features.LowDB,
+		features.MidDB,
+		features.HighDB,
+	})
+}
+
+func (t *StateTracker) startupVaries() bool {
+	if len(t.startupLevels) < 5 {
+		return false
+	}
+	for band := range 4 {
+		minimum := t.startupLevels[0][band]
+		maximum := minimum
+		for _, levels := range t.startupLevels[1:] {
+			minimum = math.Min(minimum, levels[band])
+			maximum = math.Max(maximum, levels[band])
+		}
+		threshold := startupBandVariationDB
+		if band == 0 {
+			threshold = startupLevelVariationDB
+		}
+		if maximum-minimum >= threshold {
+			return true
+		}
+	}
+	return false
+}
+
+func (t *StateTracker) startupFloorLevels(elapsed time.Duration) [4]float64 {
+	current := [4]float64{t.noiseFloorDB, t.bandFloorDB[0], t.bandFloorDB[1], t.bandFloorDB[2]}
+	if elapsed < noiseObservationDuration {
+		latest := t.startupLevels[len(t.startupLevels)-1]
+		for i := range current {
+			current[i] = math.Min(current[i], latest[i])
+		}
+		return current
+	}
+
+	for band := range current {
+		values := make([]float64, len(t.startupLevels))
+		for i, levels := range t.startupLevels {
+			values[i] = levels[band]
+		}
+		slices.Sort(values)
+		index := int(math.Floor(float64(len(values)-1) * noiseCalibrationPercentile))
+		current[band] = values[index]
+	}
+	return current
 }
 
 func (t *StateTracker) updateInterpretation(at time.Duration, onset, sustained bool) (float64, float64, DynamicsLevel, float64, bool) {
