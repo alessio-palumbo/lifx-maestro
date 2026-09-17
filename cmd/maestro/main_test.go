@@ -17,10 +17,25 @@ func TestCommandTreeIncludesExpectedCommands(t *testing.T) {
 		got[subcommand.Name] = true
 	}
 
-	for _, name := range []string{"analyze", "devices", "generate", "live", "perform", "play", "styles"} {
+	for _, name := range []string{"analyze", "devices", "evaluate-live", "generate", "live", "perform", "play", "styles"} {
 		if !got[name] {
 			t.Fatalf("missing command %q", name)
 		}
+	}
+}
+
+func TestEvaluateLiveUsesSyntheticDeviceKinds(t *testing.T) {
+	for _, kind := range []string{"single_zone", "multizone", "matrix", "all"} {
+		infos, err := evaluationDevices(kind)
+		if err != nil {
+			t.Fatalf("evaluationDevices(%q): %v", kind, err)
+		}
+		if len(infos) == 0 {
+			t.Fatalf("evaluationDevices(%q) returned no devices", kind)
+		}
+	}
+	if _, err := evaluationDevices("beam"); err == nil {
+		t.Fatal("unsupported synthetic device kind was accepted")
 	}
 }
 

@@ -380,18 +380,31 @@ and `--style` for the main user-facing tuning controls. Developer tuning constan
 are `DefaultAnalysisWindow`, `DefaultAnalysisHop`, `DefaultCapturePeriod`, and
 `DefaultTrackerConfig`.
 
-For repeatable analyzer diagnostics, compare rolling Live output with Librosa's
-full-track beat analysis using an arbitrary local audio file:
+For repeatable end-to-end diagnostics, run the production rolling analyzer,
+tracker, generator, and renderer against a local MP3 or WAV without discovering
+or contacting lights:
 
 ```bash
-analyzer/.venv/bin/python scripts/evaluate-live.py samples/song.mp3
+go run ./cmd/maestro evaluate-live --python analyzer/.venv/bin/python --device-kind multizone samples/song.mp3
+go run ./cmd/maestro evaluate-live --output /tmp/song-live.json samples/song.mp3
 ```
 
-The report shows stable-clock coverage, raw beat-anchor recall and precision,
-predicted clock-beat accuracy, and the longest clock-beat gap in each 10-second
-bucket. Live's causal result is not expected to match an offline analysis exactly;
-the report is primarily useful for finding sections where tempo tracking or
-rhythmic output vanishes.
+`evaluate-live` supports synthetic `single_zone`, `multizone`, `matrix`, or `all`
+targets. It scales the file to a repeatable simulated microphone level of -42 dB
+RMS and primes the tracker with three seconds at its room baseline; use
+`--input-level` to reproduce a different level observed in verbose microphone
+logs. The console report shows active and stable-clock coverage, dynamics,
+effect intents, generated event counts, and ten-second comparisons with the
+existing full-track beats, accents, and sections. `--output` writes every Live
+state and rendered event for detailed inspection. `--skip-offline` avoids the
+slower full-track comparison.
+
+The comparison measures agreement, not musical ground truth. Beat tracking is
+metrically ambiguous, so a musically useful 80 BPM Live pulse can score poorly
+against an offline 160 BPM subdivision. The older
+`scripts/evaluate-live.py` remains useful for inspecting the raw Python analyzer,
+but it does not execute the Go tracker or generator and is not the authoritative
+end-to-end result.
 
 The current analyzer implementation depends on Python, NumPy, and Librosa through
 the same development or bundled executable used by offline analysis. Neither the

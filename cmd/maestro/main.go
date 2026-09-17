@@ -39,6 +39,7 @@ func newCommand() *cli.Command {
 		Commands: []*cli.Command{
 			analyzeCommand(),
 			devicesCommand(),
+			evaluateLiveCommand(),
 			generateCommand(),
 			liveCommand(),
 			performCommand(),
@@ -46,6 +47,117 @@ func newCommand() *cli.Command {
 			stylesCommand(),
 		},
 	}
+}
+
+func evaluateLiveCommand() *cli.Command {
+	return &cli.Command{
+		Name:      "evaluate-live",
+		Usage:     "evaluate the Live pipeline reproducibly from an audio file",
+		ArgsUsage: "<song.mp3|song.wav>",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "style", Value: "synthwave", Usage: "generation style"},
+			&cli.StringFlag{Name: "intensity", Value: string(generation.DynamicsAuto), Usage: "show intensity (auto, calm, balanced, or energetic)"},
+			&cli.StringFlag{Name: "sensitivity", Value: string(livemode.SensitivityLow), Usage: "input sensitivity (low, normal, or high)"},
+			&cli.StringFlag{Name: "device-kind", Value: "all", Usage: "synthetic target kind (single_zone, multizone, matrix, or all)"},
+			&cli.Float64Flag{Name: "input-level", Value: livemode.DefaultEvaluationInputDB, Usage: "simulated microphone RMS level in dB"},
+			&cli.StringFlag{Name: "output", Usage: "write the complete state and event trace as JSON"},
+			&cli.BoolFlag{Name: "skip-offline", Usage: "skip comparison with full-track analysis"},
+			&cli.StringFlag{Name: "python", Usage: "python executable (overrides the bundled analyzer)"},
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			audioPath, err := singleArg(cmd, "maestro evaluate-live [options] <song.mp3|song.wav>")
+			if err != nil {
+				return err
+			}
+			if err := audio.ValidateInput(audioPath); err != nil {
+				return err
+			}
+			trackerConfig, err := livemode.TrackerConfigForSensitivity(cmd.String("sensitivity"))
+			if err != nil {
+				return err
+			}
+			selected, err := evaluationDevices(cmd.String("device-kind"))
+			if err != nil {
+				return err
+			}
+			analyzerConfig, err := newAnalyzer(cmd)
+			if err != nil {
+				return err
+			}
+
+			fmt.Fprintln(os.Stderr, "decoding audio...")
+			pcm, err := audio.DecodePCM(audioPath)
+			if err != nil {
+				return err
+			}
+			var offline *analysis.SongAnalysis
+			if !cmd.Bool("skip-offline") {
+				fmt.Fprintln(os.Stderr, "running full-track comparison...")
+				offline, err = analyzerConfig.Analyze(ctx, audioPath)
+				if err != nil {
+					return fmt.Errorf("run offline comparison: %w", err)
+				}
+			}
+			analyzer, err := livemode.NewPythonAnalyzer(ctx, analyzerConfig)
+			if err != nil {
+				return err
+			}
+			generator, err := livemode.NewGenerator(livemode.GeneratorConfig{
+				Style:     cmd.String("style"),
+				Intensity: generation.DynamicsOverride(cmd.String("intensity")),
+				Devices:   selected,
+			})
+			if err != nil {
+				_ = analyzer.Close()
+				return err
+			}
+			fmt.Fprintln(os.Stderr, "running rolling Live pipeline...")
+			trace, err := livemode.EvaluatePCM(ctx, audioPath, pcm.Samples, pcm.SampleRate, livemode.EvaluationConfig{
+				Analyzer: analyzer, Tracker: livemode.NewStateTracker(trackerConfig), Generator: generator,
+				InputLevelDB: cmd.Float64("input-level"),
+			})
+			if err != nil {
+				return err
+			}
+			livemode.AddOfflineComparison(trace, offline, livemode.DefaultEvaluationBucket)
+			livemode.WriteEvaluationReport(os.Stdout, trace)
+			if output := cmd.String("output"); output != "" {
+				if err := livemode.SaveEvaluationTrace(output, trace); err != nil {
+					return err
+				}
+				fmt.Fprintf(os.Stdout, "trace                %s\n", output)
+			}
+			return nil
+		},
+	}
+}
+
+func evaluationDevices(kind string) ([]devices.DeviceInfo, error) {
+	infos, err := devices.NewMockDeviceController(io.Discard).Devices()
+	if err != nil {
+		return nil, err
+	}
+	if kind == "all" {
+		return devices.ControllableLights(infos), nil
+	}
+	var wanted devices.DeviceKind
+	switch kind {
+	case "single_zone":
+		wanted = devices.DeviceKindSingleZone
+	case "multizone", "multi_zone":
+		wanted = devices.DeviceKindMultiZone
+	case "matrix":
+		wanted = devices.DeviceKindMatrix
+	default:
+		return nil, fmt.Errorf("unsupported evaluation device kind %q (use single_zone, multizone, matrix, or all)", kind)
+	}
+	selected := make([]devices.DeviceInfo, 0, 1)
+	for _, info := range infos {
+		if info.Capabilities.Kind == wanted {
+			selected = append(selected, info)
+		}
+	}
+	return selected, nil
 }
 
 func liveCommand() *cli.Command {

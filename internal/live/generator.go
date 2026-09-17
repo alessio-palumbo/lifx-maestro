@@ -32,6 +32,12 @@ type Generator struct {
 	lastStateAt time.Duration
 }
 
+type GenerationDecision struct {
+	Intent rendering.IntentKind
+	Accent bool
+	Events []timeline.Event
+}
+
 func NewGenerator(config GeneratorConfig) (*Generator, error) {
 	if config.Style == "" {
 		config.Style = "synthwave"
@@ -53,9 +59,13 @@ func NewGenerator(config GeneratorConfig) (*Generator, error) {
 }
 
 func (g *Generator) Generate(state State) []timeline.Event {
+	return g.GenerateDecision(state).Events
+}
+
+func (g *Generator) GenerateDecision(state State) GenerationDecision {
 	motion := g.advanceMotion(state)
 	if !state.Active || len(g.devices) == 0 {
-		return nil
+		return GenerationDecision{}
 	}
 
 	if state.SectionChange {
@@ -67,10 +77,10 @@ func (g *Generator) Generate(state State) []timeline.Event {
 		accent = false
 	}
 	if !accent && !state.Sustained {
-		return nil
+		return GenerationDecision{}
 	}
 	if !accent && state.At-g.lastAmbient < ambientHop {
-		return nil
+		return GenerationDecision{}
 	}
 	if !accent {
 		g.lastAmbient = state.At
@@ -119,7 +129,7 @@ func (g *Generator) Generate(state State) []timeline.Event {
 			},
 		}, device)...)
 	}
-	return events
+	return GenerationDecision{Intent: kind, Accent: accent, Events: events}
 }
 
 func (g *Generator) ambientIntent(state State) rendering.IntentKind {
