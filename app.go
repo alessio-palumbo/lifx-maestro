@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"lifx-maestro/internal/audio"
 	"lifx-maestro/internal/devices"
 	"lifx-maestro/internal/generation"
+	livemode "lifx-maestro/internal/live"
 	"lifx-maestro/internal/playback"
 	"lifx-maestro/internal/timeline"
 )
@@ -27,9 +29,14 @@ type App struct {
 	ctx          context.Context
 	previewMu    sync.Mutex
 	previewStop  context.CancelFunc
+	previewDone  chan struct{}
 	previewAudio *audio.BeepPlayer
 	previewLifx  *devices.LifxDeviceController
 	previewLight *playback.Player
+	liveMu       sync.Mutex
+	liveStop     context.CancelFunc
+	liveDone     chan struct{}
+	liveSession  *livemode.Session
 	lifxMu       sync.Mutex
 	lifx         *devices.LifxDeviceController
 	// analyzerMu prevents startup warmup and user-triggered analysis from
@@ -70,6 +77,12 @@ func (a *App) SetMasterBrightness(percent float64) {
 	a.previewMu.Unlock()
 	if player != nil {
 		player.SetMasterBrightness(scale)
+	}
+	a.liveMu.Lock()
+	liveSession := a.liveSession
+	a.liveMu.Unlock()
+	if liveSession != nil {
+		liveSession.SetMasterBrightness(scale)
 	}
 }
 
@@ -145,6 +158,48 @@ type EditorDeviceCapabilities struct {
 	MatrixLength int                `json:"matrix_length"`
 }
 
+type LiveRequest struct {
+	Input       string `json:"input"`
+	Target      string `json:"target"`
+	Style       string `json:"style"`
+	Intensity   string `json:"intensity"`
+	Sensitivity string `json:"sensitivity"`
+}
+
+type LiveInput struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Default bool   `json:"default"`
+}
+
+type LiveState struct {
+	ElapsedMS       int64   `json:"elapsed_ms"`
+	Input           string  `json:"input"`
+	InputDB         float64 `json:"input_db"`
+	NoiseFloorDB    float64 `json:"noise_floor_db"`
+	MarginDB        float64 `json:"margin_db"`
+	Energy          float64 `json:"energy"`
+	Presence        float64 `json:"presence"`
+	Low             float64 `json:"low"`
+	Mid             float64 `json:"mid"`
+	High            float64 `json:"high"`
+	TempoBPM        float64 `json:"tempo_bpm"`
+	TempoConfidence float64 `json:"tempo_confidence"`
+	Activity        float64 `json:"activity"`
+	Intensity       float64 `json:"intensity"`
+	Dynamics        string  `json:"dynamics"`
+	Novelty         float64 `json:"novelty"`
+	Active          bool    `json:"active"`
+	Sustained       bool    `json:"sustained"`
+	Onset           bool    `json:"onset"`
+	Beat            bool    `json:"beat"`
+	SectionChange   bool    `json:"section_change"`
+}
+
+type LiveStopped struct {
+	Error string `json:"error,omitempty"`
+}
+
 func NewApp() *App {
 	return &App{}
 }
@@ -165,6 +220,7 @@ func (a *App) startup(ctx context.Context) {
 }
 
 func (a *App) shutdown(ctx context.Context) {
+	a.StopLive()
 	a.StopPreview()
 
 	a.lifxMu.Lock()
@@ -175,6 +231,165 @@ func (a *App) shutdown(ctx context.Context) {
 	if controller != nil {
 		_ = controller.Close()
 	}
+}
+
+func (a *App) LiveInputs() ([]LiveInput, error) {
+	inputs, err := livemode.ListInputDevices()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]LiveInput, 0, len(inputs))
+	for _, input := range inputs {
+		result = append(result, LiveInput{ID: input.ID, Name: input.Name, Default: input.Default})
+	}
+	return result, nil
+}
+
+func (a *App) StartLive(request LiveRequest) error {
+	if request.Target == "" {
+		request.Target = "all"
+	}
+	if request.Style == "" {
+		request.Style = "synthwave"
+	}
+	if request.Intensity == "" {
+		request.Intensity = string(generation.DynamicsAuto)
+	}
+	if request.Sensitivity == "" {
+		request.Sensitivity = string(livemode.SensitivityLow)
+	}
+	trackerConfig, err := livemode.TrackerConfigForSensitivity(request.Sensitivity)
+	if err != nil {
+		return err
+	}
+
+	a.StopPreview()
+	a.StopLive()
+	a.cancelAnalyzerWarmup()
+	if _, err := a.ensureAnalyzerInstalled(); err != nil && !errors.Is(err, analyzerbin.ErrNotBundled) {
+		return fmt.Errorf("prepare analyzer: %w", err)
+	}
+	analyzerConfig, err := analyzerbin.NewAnalyzer()
+	if err != nil {
+		return fmt.Errorf("prepare analyzer: %w", err)
+	}
+
+	controller, err := a.lifxController()
+	if err != nil {
+		return err
+	}
+	infos, err := controller.Devices()
+	if err != nil {
+		return err
+	}
+	selected, err := devices.SelectDeviceInfos(infos, request.Target)
+	if err != nil {
+		return err
+	}
+	selected = devices.ControllableLights(selected)
+	if len(selected) == 0 {
+		return fmt.Errorf("target %q contains no controllable lights", request.Target)
+	}
+
+	parent := a.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithCancel(parent)
+	analyzer, err := livemode.NewPythonAnalyzer(ctx, analyzerConfig)
+	if err != nil {
+		cancel()
+		return err
+	}
+	generator, err := livemode.NewGenerator(livemode.GeneratorConfig{
+		Style: request.Style, Intensity: generation.DynamicsOverride(request.Intensity), Devices: selected,
+	})
+	if err != nil {
+		cancel()
+		_ = analyzer.Close()
+		return err
+	}
+	source := livemode.NewMicrophoneSource(livemode.MicrophoneConfig{Device: request.Input})
+	observer := &wailsLiveObserver{app: a, source: source}
+	session, err := livemode.NewSession(livemode.SessionConfig{
+		Controller: controller, Devices: selected, Source: source, Analyzer: analyzer,
+		Tracker: livemode.NewStateTracker(trackerConfig), Generator: generator, Observer: observer,
+		MasterBrightness: a.masterBrightnessScale(),
+		OnDispatchError: func(event timeline.Event, err error) {
+			observer.ReportError(fmt.Sprintf("%s: %v", event.Target, err))
+		},
+	})
+	if err != nil {
+		cancel()
+		_ = analyzer.Close()
+		return err
+	}
+	done := make(chan struct{})
+	a.liveMu.Lock()
+	a.liveStop = cancel
+	a.liveDone = done
+	a.liveSession = session
+	a.liveMu.Unlock()
+
+	go func() {
+		runErr := session.Run(ctx)
+		stopped := LiveStopped{}
+		if runErr != nil && !errors.Is(runErr, context.Canceled) {
+			stopped.Error = runErr.Error()
+		}
+		wailsruntime.EventsEmit(a.ctx, "live:stopped", stopped)
+		a.liveMu.Lock()
+		if a.liveSession == session {
+			a.liveStop = nil
+			a.liveDone = nil
+			a.liveSession = nil
+		}
+		close(done)
+		a.liveMu.Unlock()
+	}()
+	return nil
+}
+
+func (a *App) StopLive() {
+	a.liveMu.Lock()
+	cancel := a.liveStop
+	done := a.liveDone
+	a.liveMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if done != nil {
+		<-done
+	}
+}
+
+type wailsLiveObserver struct {
+	app       *App
+	source    *livemode.MicrophoneSource
+	errorMu   sync.Mutex
+	lastError time.Time
+}
+
+func (o *wailsLiveObserver) Observe(state livemode.State) {
+	wailsruntime.EventsEmit(o.app.ctx, "live:state", LiveState{
+		ElapsedMS: state.At.Milliseconds(), Input: o.source.Name(), InputDB: state.InputDB,
+		NoiseFloorDB: state.NoiseFloorDB, MarginDB: state.MarginDB, Energy: state.Energy,
+		Presence: state.Presence, Low: state.Low, Mid: state.Mid, High: state.High,
+		TempoBPM: state.TempoBPM, TempoConfidence: state.TempoConfidence,
+		Activity: state.Activity, Intensity: state.Intensity, Dynamics: string(state.Dynamics),
+		Novelty: state.Novelty, Active: state.Active, Sustained: state.Sustained,
+		Onset: state.Onset, Beat: state.Beat, SectionChange: state.SectionChange,
+	})
+}
+
+func (o *wailsLiveObserver) ReportError(message string) {
+	o.errorMu.Lock()
+	defer o.errorMu.Unlock()
+	if time.Since(o.lastError) < time.Second {
+		return
+	}
+	o.lastError = time.Now()
+	wailsruntime.EventsEmit(o.app.ctx, "live:error", message)
 }
 
 func (a *App) Styles() []string {
@@ -398,6 +613,7 @@ func (a *App) StartPreview(request PreviewRequest) error {
 		return err
 	}
 
+	a.StopLive()
 	a.StopPreview()
 
 	controller, err := a.lifxController()
@@ -413,6 +629,7 @@ func (a *App) StartPreview(request PreviewRequest) error {
 	}
 
 	ctx, cancel := context.WithCancel(a.ctx)
+	done := make(chan struct{})
 	lightingPlayer := playback.NewPlayer(controller, playback.Options{
 		ClockLabel:       "audio",
 		MasterBrightness: a.masterBrightnessScale(),
@@ -420,12 +637,14 @@ func (a *App) StartPreview(request PreviewRequest) error {
 
 	a.previewMu.Lock()
 	a.previewStop = cancel
+	a.previewDone = done
 	a.previewAudio = audioPlayer
 	a.previewLifx = controller
 	a.previewLight = lightingPlayer
 	a.previewMu.Unlock()
 
 	go func() {
+		defer close(done)
 		defer restore()
 		defer audioPlayer.Stop()
 		defer a.clearPreview(controller)
@@ -448,6 +667,7 @@ func (a *App) StartAudioPreview(audioPath string) error {
 		return fmt.Errorf("audio path is required")
 	}
 
+	a.StopLive()
 	a.StopPreview()
 
 	audioPlayer, err := audio.NewBeepPlayer(audioPath)
@@ -456,15 +676,18 @@ func (a *App) StartAudioPreview(audioPath string) error {
 	}
 
 	ctx, cancel := context.WithCancel(a.ctx)
+	done := make(chan struct{})
 
 	a.previewMu.Lock()
 	a.previewStop = cancel
+	a.previewDone = done
 	a.previewAudio = audioPlayer
 	a.previewLifx = nil
 	a.previewLight = nil
 	a.previewMu.Unlock()
 
 	go func() {
+		defer close(done)
 		defer audioPlayer.Stop()
 		defer a.clearPreview(nil)
 		select {
@@ -483,8 +706,10 @@ func (a *App) StartAudioPreview(audioPath string) error {
 func (a *App) StopPreview() {
 	a.previewMu.Lock()
 	cancel := a.previewStop
+	done := a.previewDone
 	audioPlayer := a.previewAudio
 	a.previewStop = nil
+	a.previewDone = nil
 	a.previewAudio = nil
 	a.previewLifx = nil
 	a.previewLight = nil
@@ -495,6 +720,9 @@ func (a *App) StopPreview() {
 	}
 	if audioPlayer != nil {
 		_ = audioPlayer.Stop()
+	}
+	if done != nil {
+		<-done
 	}
 }
 
@@ -525,6 +753,7 @@ func (a *App) clearPreview(controller *devices.LifxDeviceController) {
 	defer a.previewMu.Unlock()
 	if a.previewLifx == controller {
 		a.previewStop = nil
+		a.previewDone = nil
 		a.previewAudio = nil
 		a.previewLifx = nil
 		a.previewLight = nil

@@ -5,6 +5,7 @@ go 1.26
 require (
 	github.com/alessio-palumbo/lifxlan-go v0.6.4
 	github.com/alessio-palumbo/lifxprotocol-go v0.4.0
+	github.com/gen2brain/malgo v0.11.26
 	github.com/gopxl/beep v1.4.1
 	github.com/urfave/cli/v3 v3.9.0
 	github.com/wailsapp/wails/v2 v2.12.0
@@ -16,7 +17,6 @@ require (
 	github.com/bep/debounce v1.2.1 // indirect
 	github.com/ebitengine/oto/v3 v3.1.0 // indirect
 	github.com/ebitengine/purego v0.7.1 // indirect
-	github.com/gen2brain/malgo v0.11.26 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect

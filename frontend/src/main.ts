@@ -1,6 +1,7 @@
 import './style.css';
 
-import { Analyze, AnalyzerPreparing, AudioDuration, ChooseAudioFile, ChooseTimelineSavePath, DiscoverDevices, DynamicsOptions, GenerateFromAnalysis, GenerationModes, MasterBrightness, PausePreview, ResumePreview, SaveTimeline, SetMasterBrightness, StartAudioPreview, StartPreview, StopPreview, Styles } from '../wailsjs/go/main/App';
+import { Analyze, AnalyzerPreparing, AudioDuration, ChooseAudioFile, ChooseTimelineSavePath, DiscoverDevices, DynamicsOptions, GenerateFromAnalysis, GenerationModes, LiveInputs, MasterBrightness, PausePreview, ResumePreview, SaveTimeline, SetMasterBrightness, StartAudioPreview, StartLive, StartPreview, StopLive, StopPreview, Styles } from '../wailsjs/go/main/App';
+import { EventsOn } from '../wailsjs/runtime/runtime';
 
 // The walkthrough only appears while the bundled analyzer is preparing itself,
 // which is the one moment there is a wait worth filling. Set LIFX_MAESTRO_FORCE_TOUR
@@ -89,6 +90,40 @@ type StreamAssignment = {
   device_ids: string[];
 };
 
+type WorkspaceMode = 'timeline' | 'live';
+
+type LiveInput = {
+  id: string;
+  name: string;
+  default: boolean;
+};
+
+type LiveAnalysisState = {
+  elapsed_ms: number;
+  input: string;
+  input_db: number;
+  noise_floor_db: number;
+  margin_db: number;
+  energy: number;
+  presence: number;
+  low: number;
+  mid: number;
+  high: number;
+  tempo_bpm: number;
+  tempo_confidence: number;
+  activity: number;
+  intensity: number;
+  dynamics: string;
+  novelty: number;
+  active: boolean;
+  sustained: boolean;
+  onset: boolean;
+  beat: boolean;
+  section_change: boolean;
+};
+
+type LiveHistoryPoint = Pick<LiveAnalysisState, 'energy' | 'low' | 'mid' | 'high'>;
+
 type TimelineEvent = {
   time_ms: number;
   target: string;
@@ -142,6 +177,7 @@ type EditorSession = {
 };
 
 type AppState = {
+	workspaceMode: WorkspaceMode;
   session: EditorSession | null;
   devices: DeviceInfo[];
   styles: string[];
@@ -191,9 +227,19 @@ type AppState = {
   sidebarOpen: boolean;
   timelineScrollLeft: number;
   timelineScrollTop: number;
+  liveInputs: LiveInput[];
+  liveInput: string;
+  liveStyle: string;
+  liveIntensity: string;
+  liveSensitivity: string;
+  liveRunning: boolean;
+  liveStarting: boolean;
+  liveState: LiveAnalysisState | null;
+  liveHistory: LiveHistoryPoint[];
 };
 
 const state: AppState = {
+	workspaceMode: 'timeline',
   session: null,
   devices: [],
   styles: [],
@@ -237,6 +283,15 @@ const state: AppState = {
   sidebarOpen: true,
   timelineScrollLeft: 0,
   timelineScrollTop: 0,
+  liveInputs: [],
+  liveInput: '',
+  liveStyle: 'synthwave',
+  liveIntensity: 'auto',
+  liveSensitivity: 'low',
+  liveRunning: false,
+  liveStarting: false,
+  liveState: null,
+  liveHistory: [],
 };
 
 let playTimer: number | undefined;
@@ -253,6 +308,38 @@ void bootstrap();
 // The card and highlight are placed in viewport coordinates, so a resize has to
 // re-place them. Registered once, outside render, which rebuilds the DOM.
 window.addEventListener('resize', positionTour);
+
+EventsOn('live:state', (update: LiveAnalysisState) => {
+  const started = !state.liveRunning || state.liveStarting;
+  state.liveState = update;
+  state.liveRunning = true;
+  state.liveStarting = false;
+  state.liveHistory.push({ energy: update.energy, low: update.low, mid: update.mid, high: update.high });
+  if (state.liveHistory.length > 240) {
+    state.liveHistory.splice(0, state.liveHistory.length - 240);
+  }
+  if (started) {
+    render();
+    return;
+  }
+  updateLiveDisplay();
+});
+
+EventsOn('live:stopped', (result: { error?: string }) => {
+  state.liveRunning = false;
+  state.liveStarting = false;
+  if (result?.error) {
+    reportFailure(`Live stopped: ${result.error}`);
+  } else {
+    state.status = 'Live stopped';
+  }
+  render();
+});
+
+EventsOn('live:error', (message: string) => {
+  reportFailure(`Live output failed: ${message}`);
+  render();
+});
 
 // Whether the first-run walkthrough is worth showing. A failure here should never
 // keep the app from starting, so treat it as "nothing to explain".
@@ -273,6 +360,7 @@ async function bootstrap() {
   }
   try {
     state.styles = await Styles();
+	state.liveStyle = state.styles[0] ?? 'synthwave';
     state.generationModes = await GenerationModes();
     state.dynamicsOptions = await DynamicsOptions();
     state.status = 'Discovering LIFX LAN devices';
@@ -298,18 +386,22 @@ function reportFailure(error: unknown) {
 function render() {
   captureTimelineScroll();
   captureEnergyScroll();
+  const live = state.workspaceMode === 'live';
   app.innerHTML = `
     <div class="shell" style="--inspector-width:${state.inspectorOpen ? state.inspectorWidth : 0}px;">
       ${renderToolbar()}
-      <div class="workspace ${state.inspectorOpen ? '' : 'inspector-closed'} ${state.sidebarOpen ? '' : 'sidebar-closed'}">
+      ${renderWorkspaceTabs()}
+      <div class="workspace ${live ? 'live-workspace inspector-closed' : state.inspectorOpen ? '' : 'inspector-closed'} ${state.sidebarOpen ? '' : 'sidebar-closed'}">
         ${renderTargets()}
-        <main class="timeline-panel">
-          ${renderOverview()}
-          ${renderLayerAssignments(state.session)}
-          ${renderTimeline()}
-          ${renderAnalysis()}
-        </main>
-        ${renderInspector()}
+        ${live ? renderLiveWorkspace() : `
+          <main class="timeline-panel">
+            ${renderOverview()}
+            ${renderLayerAssignments(state.session)}
+            ${renderTimeline()}
+            ${renderAnalysis()}
+          </main>
+          ${renderInspector()}
+        `}
       </div>
       ${renderError()}
       ${renderOverlay()}
@@ -319,15 +411,26 @@ function render() {
   bindEvents();
   restoreTimelineScroll();
   restoreEnergyScroll();
+  updateLiveDisplay();
   // Anchor positions come from the DOM that was just built, so they can never go
   // stale against a re-render.
   positionTour();
 }
 
+function renderWorkspaceTabs() {
+  return `
+    <nav class="workspace-tabs" aria-label="Workspace">
+      <button class="workspace-tab ${state.workspaceMode === 'timeline' ? 'selected' : ''}" data-workspace="timeline">Timeline</button>
+      <button class="workspace-tab ${state.workspaceMode === 'live' ? 'selected' : ''}" data-workspace="live">Live</button>
+    </nav>
+  `;
+}
+
 function renderToolbar() {
   const session = state.session;
+  const live = state.workspaceMode === 'live';
   const styleOptions = state.styles
-    .map((style) => `<option value="${style}" ${session?.style === style ? 'selected' : ''}>${style}</option>`)
+    .map((style) => `<option value="${style}" ${(live ? state.liveStyle : session?.style) === style ? 'selected' : ''}>${style}</option>`)
     .join('');
   const generation = session?.generation ?? state.generationMode;
   const generationOptions = state.generationModes
@@ -335,7 +438,7 @@ function renderToolbar() {
     .join('');
   const generateLabel = state.needsRegeneration && !state.regenerationReasons.song ? 'Regenerate' : 'Generate';
   return `
-    <header class="toolbar">
+    <header class="toolbar ${live ? 'live-toolbar' : ''}">
       <div class="brand">
         <div class="mark"></div>
         <div>
@@ -343,9 +446,15 @@ function renderToolbar() {
         </div>
       </div>
       <div class="transport">
-        <button id="play-toggle" class="tool icon-action transport-button ${state.previewStarting ? 'pending' : ''}" title="${transportActionLabel()}" aria-label="${transportActionLabel()}" ${state.previewStarting || !selectedSongPath() ? 'disabled' : ''}>${transportIcon()}</button>
-        <button id="stop" class="tool icon-action transport-button" title="Stop" aria-label="Stop" ${state.previewStarting || !selectedSongPath() ? 'disabled' : ''}>${iconSVG('stop')}</button>
-        <div class="timecode">${formatTime(state.playheadMS)} / ${formatTime(session ? playbackDurationMS(session) : 0)}</div>
+        ${live ? `
+          <button id="live-start" class="tool icon-action transport-button ${state.liveStarting && !state.liveRunning ? 'pending' : ''}" title="Start Live" aria-label="Start Live" ${state.liveRunning || state.liveStarting ? 'disabled' : ''}>${state.liveStarting && !state.liveRunning ? '<span class="button-spinner" aria-hidden="true"></span>' : iconSVG('microphone')}</button>
+          <button id="live-stop" class="tool icon-action transport-button ${state.liveStarting && state.liveRunning ? 'pending' : ''}" title="Stop Live" aria-label="Stop Live" ${!state.liveRunning || state.liveStarting ? 'disabled' : ''}>${state.liveStarting && state.liveRunning ? '<span class="button-spinner" aria-hidden="true"></span>' : iconSVG('stop')}</button>
+          <div class="timecode live-timecode">${formatTime(state.liveState?.elapsed_ms ?? 0)} <span>${state.liveRunning ? 'listening' : 'ready'}</span></div>
+        ` : `
+          <button id="play-toggle" class="tool icon-action transport-button ${state.previewStarting ? 'pending' : ''}" title="${transportActionLabel()}" aria-label="${transportActionLabel()}" ${state.previewStarting || !selectedSongPath() ? 'disabled' : ''}>${transportIcon()}</button>
+          <button id="stop" class="tool icon-action transport-button" title="Stop" aria-label="Stop" ${state.previewStarting || !selectedSongPath() ? 'disabled' : ''}>${iconSVG('stop')}</button>
+          <div class="timecode">${formatTime(state.playheadMS)} / ${formatTime(session ? playbackDurationMS(session) : 0)}</div>
+        `}
       </div>
       <div class="master-output">
         <label class="brightness-control" title="Master brightness">
@@ -356,19 +465,21 @@ function renderToolbar() {
       <div class="actions">
         <label class="field">
           <span>Style</span>
-          <select id="style" class="select-control">${styleOptions}</select>
+          <select id="style" class="select-control" ${state.liveRunning || state.liveStarting ? 'disabled' : ''}>${styleOptions}</select>
         </label>
-        <label class="field">
-          <span>Mode</span>
-          <select id="generation-mode" class="select-control">${generationOptions}</select>
-        </label>
-        <button id="choose-song" class="tool primary" ${state.loading ? 'disabled' : ''}>Choose Song</button>
-        <button id="regenerate" class="tool ${state.needsRegeneration ? 'attention' : ''}" ${state.loading || !selectedSongPath() ? 'disabled' : ''}>${generateLabel}</button>
-        <button id="save" class="tool icon-action download-action" title="Download selected timeline JSON" aria-label="Download selected timeline JSON" ${!session ? 'disabled' : ''}>
-          <svg class="download-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14" />
-          </svg>
-        </button>
+        ${live ? '' : `
+          <label class="field">
+            <span>Mode</span>
+            <select id="generation-mode" class="select-control">${generationOptions}</select>
+          </label>
+          <button id="choose-song" class="tool primary" ${state.loading ? 'disabled' : ''}>Choose Song</button>
+          <button id="regenerate" class="tool ${state.needsRegeneration ? 'attention' : ''}" ${state.loading || !selectedSongPath() ? 'disabled' : ''}>${generateLabel}</button>
+          <button id="save" class="tool icon-action download-action" title="Download selected timeline JSON" aria-label="Download selected timeline JSON" ${!session ? 'disabled' : ''}>
+            <svg class="download-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14" />
+            </svg>
+          </button>
+        `}
       </div>
     </header>
   `;
@@ -391,14 +502,183 @@ function transportIcon() {
   return iconSVG(state.playing ? 'pause' : 'play');
 }
 
-function iconSVG(name: 'play' | 'pause' | 'stop' | 'sun') {
+function iconSVG(name: 'play' | 'pause' | 'stop' | 'sun' | 'microphone') {
   const content = {
     play: '<polygon points="6 3 20 12 6 21 6 3"></polygon>',
     pause: '<rect x="6" y="4" width="4" height="16" rx="1"></rect><rect x="14" y="4" width="4" height="16" rx="1"></rect>',
     stop: '<rect x="4" y="4" width="16" height="16" rx="2"></rect>',
     sun: '<circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"></path>',
+    microphone: '<rect x="9" y="3" width="6" height="12" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6"></path>',
   }[name];
   return `<svg class="toolbar-icon" viewBox="0 0 24 24" aria-hidden="true">${content}</svg>`;
+}
+
+function renderLiveWorkspace() {
+  const live = state.liveState;
+  const inputOptions = [
+    '<option value="">System default</option>',
+    ...state.liveInputs.map((input) => `<option value="${escapeAttr(input.id)}" ${state.liveInput === input.id ? 'selected' : ''}>${escapeHTML(input.name)}${input.default ? ' (default)' : ''}</option>`),
+  ].join('');
+  const intensityOptions = state.dynamicsOptions
+    .map((value) => `<option value="${escapeAttr(value)}" ${state.liveIntensity === value ? 'selected' : ''}>${escapeHTML(value === 'auto' ? 'Auto' : capitalize(value))}</option>`)
+    .join('');
+  const disabled = state.liveRunning || state.liveStarting ? 'disabled' : '';
+  return `
+    <main class="live-panel">
+      <section class="live-config">
+        <div class="live-heading">
+          <div class="panel-title live-config-title">Microphone settings</div>
+          <span id="live-status" class="live-status ${live?.active ? 'active' : ''}">${liveStatusLabel()}</span>
+        </div>
+        <div class="live-controls">
+          <label class="field live-field"><span>Input</span><select id="live-input" ${disabled}>${inputOptions}</select></label>
+          <label class="field live-field"><span>Sensitivity</span><select id="live-sensitivity" ${disabled}>
+            ${['low', 'normal', 'high'].map((value) => `<option value="${value}" ${state.liveSensitivity === value ? 'selected' : ''}>${capitalize(value)}</option>`).join('')}
+          </select></label>
+          <label class="field live-field"><span>Dynamics</span><select id="live-intensity" ${disabled}>${intensityOptions}</select></label>
+        </div>
+      </section>
+      <section id="live-signal" class="live-signal ${live?.beat ? 'accent' : ''}">
+        <div class="live-primary">
+          <div class="live-primary-value"><strong id="live-energy">${livePercent(live?.energy ?? 0)}</strong><span>Energy</span></div>
+          <div class="level-track" aria-label="Input level and noise floor">
+            <div id="live-level-fill" class="level-fill" style="width:${dbPosition(live?.input_db ?? -90)}%"></div>
+            <span id="live-floor-marker" class="floor-marker" style="left:${dbPosition(live?.noise_floor_db ?? -60)}%"></span>
+          </div>
+          <div class="level-labels"><span id="live-input-db">${formatDB(live?.input_db)}</span><span id="live-floor-db">Floor ${formatDB(live?.noise_floor_db)}</span></div>
+        </div>
+        <div class="band-meters">
+          ${renderLiveBand('low', 'Low', live?.low ?? 0)}
+          ${renderLiveBand('mid', 'Mid', live?.mid ?? 0)}
+          ${renderLiveBand('high', 'High', live?.high ?? 0)}
+        </div>
+      </section>
+      <section class="live-history-section">
+        <div class="live-section-head"><strong>Signal history</strong><span>Energy and frequency bands</span></div>
+        <canvas id="live-history" class="live-history" aria-label="Recent live energy history"></canvas>
+      </section>
+      <section class="live-diagnostics">
+        ${renderLiveMetric('live-tempo', 'Tempo', live?.tempo_bpm ? `${live.tempo_bpm.toFixed(1)} BPM` : '—')}
+        ${renderLiveMetric('live-confidence', 'Confidence', livePercent(live?.tempo_confidence ?? 0))}
+        ${renderLiveMetric('live-dynamics', 'Dynamics', capitalize(live?.dynamics ?? 'calm'))}
+        ${renderLiveMetric('live-margin', 'Noise margin', live ? `${live.margin_db.toFixed(1)} dB` : '—')}
+        ${renderLiveMetric('live-presence', 'Presence', livePercent(live?.presence ?? 0))}
+        ${renderLiveMetric('live-activity', 'Activity', livePercent(live?.activity ?? 0))}
+      </section>
+    </main>
+  `;
+}
+
+function renderLiveBand(id: string, label: string, value: number) {
+  return `<div class="band-meter"><div class="band-label"><span>${label}</span><strong id="live-${id}-value">${livePercent(value)}</strong></div><div class="band-track"><span id="live-${id}-fill" style="width:${clamp(value, 0, 1) * 100}%"></span></div></div>`;
+}
+
+function renderLiveMetric(id: string, label: string, value: string) {
+  return `<div class="live-metric"><span>${label}</span><strong id="${id}">${escapeHTML(value)}</strong></div>`;
+}
+
+function liveStatusLabel() {
+  if (state.liveStarting) return 'Starting';
+  if (state.liveRunning) return state.liveState?.active ? 'Responding' : 'Listening';
+  return 'Stopped';
+}
+
+function updateLiveDisplay() {
+  if (state.workspaceMode !== 'live') return;
+  const live = state.liveState;
+  if (!live) {
+    drawLiveHistory();
+    return;
+  }
+  setText('live-status', liveStatusLabel());
+  document.querySelector('#live-status')?.classList.toggle('active', live.active);
+  setText('live-energy', livePercent(live.energy));
+  setText('live-input-db', formatDB(live.input_db));
+  setText('live-floor-db', `Floor ${formatDB(live.noise_floor_db)}`);
+  setWidth('live-level-fill', dbPosition(live.input_db));
+  const floorMarker = document.querySelector<HTMLElement>('#live-floor-marker');
+  if (floorMarker) floorMarker.style.left = `${dbPosition(live.noise_floor_db)}%`;
+  for (const band of ['low', 'mid', 'high'] as const) {
+    setText(`live-${band}-value`, livePercent(live[band]));
+    setWidth(`live-${band}-fill`, live[band] * 100);
+  }
+  setText('live-tempo', live.tempo_bpm ? `${live.tempo_bpm.toFixed(1)} BPM` : '—');
+  setText('live-confidence', livePercent(live.tempo_confidence));
+  setText('live-dynamics', capitalize(live.dynamics));
+  setText('live-margin', `${live.margin_db.toFixed(1)} dB`);
+  setText('live-presence', livePercent(live.presence));
+  setText('live-activity', livePercent(live.activity));
+  const signal = document.querySelector('#live-signal');
+  signal?.classList.toggle('accent', live.beat || live.onset);
+  if (live.beat || live.onset) window.setTimeout(() => signal?.classList.remove('accent'), 90);
+  const timecode = document.querySelector('.live-timecode');
+  if (timecode) timecode.innerHTML = `${formatTime(live.elapsed_ms)} <span>listening</span>`;
+  drawLiveHistory();
+}
+
+function drawLiveHistory() {
+  const canvas = document.querySelector<HTMLCanvasElement>('#live-history');
+  if (!canvas) return;
+  const rect = canvas.getBoundingClientRect();
+  const ratio = window.devicePixelRatio || 1;
+  const width = Math.max(Math.round(rect.width * ratio), 1);
+  const height = Math.max(Math.round(rect.height * ratio), 1);
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+  const context = canvas.getContext('2d');
+  if (!context) return;
+  context.clearRect(0, 0, width, height);
+  context.strokeStyle = '#28313d';
+  context.lineWidth = ratio;
+  for (let row = 1; row < 4; row++) {
+    const y = height * row / 4;
+    context.beginPath();
+    context.moveTo(0, y);
+    context.lineTo(width, y);
+    context.stroke();
+  }
+  const series: Array<[keyof LiveHistoryPoint, string, number]> = [
+    ['low', '#ffb454', 1], ['mid', '#45c4dc', 1], ['high', '#e56da7', 1], ['energy', '#edf1f7', 2],
+  ];
+  for (const [key, color, lineWidth] of series) {
+    context.strokeStyle = color;
+    context.lineWidth = lineWidth * ratio;
+    context.beginPath();
+    state.liveHistory.forEach((point, index) => {
+      const x = state.liveHistory.length <= 1 ? width : index / (state.liveHistory.length - 1) * width;
+      const y = height - clamp(point[key], 0, 1) * height;
+      if (index === 0) context.moveTo(x, y); else context.lineTo(x, y);
+    });
+    context.stroke();
+  }
+}
+
+function setText(id: string, value: string) {
+  const element = document.querySelector(`#${id}`);
+  if (element) element.textContent = value;
+}
+
+function setWidth(id: string, value: number) {
+  const element = document.querySelector<HTMLElement>(`#${id}`);
+  if (element) element.style.width = `${clamp(value, 0, 100)}%`;
+}
+
+function dbPosition(value = -90) {
+  return clamp((value + 90) / 80 * 100, 0, 100);
+}
+
+function formatDB(value?: number) {
+  return value === undefined ? '—' : `${value.toFixed(1)} dB`;
+}
+
+function livePercent(value: number) {
+  return `${Math.round(clamp(value, 0, 1) * 100)}%`;
+}
+
+function capitalize(value: string) {
+  return value ? `${value[0].toUpperCase()}${value.slice(1)}` : '—';
 }
 
 function renderError() {
@@ -530,10 +810,11 @@ function renderTargets() {
   const devices = session?.devices ?? state.devices;
   const groups = unique(devices.map((device) => device.group).filter(Boolean));
   const locations = unique(devices.map((device) => device.location).filter(Boolean));
+  const locked = state.workspaceMode === 'live' && (state.liveRunning || state.liveStarting);
   const deviceItems = devices.map((device) => {
     const selected = targetIncludesDevice(device) ? 'selected' : '';
     return `
-      <button class="device ${selected}" data-device="${escapeAttr(device.id)}">
+      <button class="device ${selected}" data-device="${escapeAttr(device.id)}" ${locked ? 'disabled' : ''}>
         <span class="device-toggle"></span>
         <span class="device-main">
           <strong>${escapeHTML(device.label || device.id)}</strong>
@@ -548,7 +829,7 @@ function renderTargets() {
     <aside class="sidebar">
       <div class="sidebar-head">
         <div class="panel-control-row right">
-          <button id="discover-devices" class="icon-tool" ${state.loading ? 'disabled' : ''} title="Refresh devices">↻</button>
+          <button id="discover-devices" class="icon-tool" ${state.loading || locked ? 'disabled' : ''} title="Refresh devices">↻</button>
           <button id="toggle-sidebar" class="panel-toggle" title="Hide targets">‹</button>
         </div>
         <div>
@@ -556,7 +837,7 @@ function renderTargets() {
           <div class="sidebar-note">${devices.length > 0 ? 'Discovered devices' : 'No devices discovered'}</div>
         </div>
       </div>
-      <button class="device ${targetAllSelected() ? 'selected' : ''}" data-target-token="all">
+      <button class="device ${targetAllSelected() ? 'selected' : ''}" data-target-token="all" ${locked ? 'disabled' : ''}>
         <span class="device-toggle"></span>
         <span class="device-main">
           <strong>All targets</strong>
@@ -564,8 +845,8 @@ function renderTargets() {
         </span>
         <span class="badge">mix</span>
       </button>
-      ${renderTokenGroup('Groups', groups, 'group')}
-      ${renderTokenGroup('Locations', locations, 'location')}
+      ${renderTokenGroup('Groups', groups, 'group', locked)}
+      ${renderTokenGroup('Locations', locations, 'location', locked)}
       <div class="token-title device-title">Devices</div>
       ${deviceItems}
     </aside>
@@ -680,7 +961,7 @@ function dynamicsSummary(dynamics?: TrackDynamics) {
   };
 }
 
-function renderTokenGroup(title: string, values: string[], kind: 'group' | 'location') {
+function renderTokenGroup(title: string, values: string[], kind: 'group' | 'location', disabled = false) {
   if (values.length === 0) {
     return '';
   }
@@ -689,7 +970,7 @@ function renderTokenGroup(title: string, values: string[], kind: 'group' | 'loca
       <div class="token-title">${escapeHTML(title)}</div>
       <div class="token-list">
         ${values.map((value) => `
-          <button class="target-token ${targetGroupSelected(value, kind) ? 'selected' : ''}" data-target-token="${escapeAttr(value)}" data-target-kind="${kind}">${escapeHTML(value)}</button>
+          <button class="target-token ${targetGroupSelected(value, kind) ? 'selected' : ''}" data-target-token="${escapeAttr(value)}" data-target-kind="${kind}" ${disabled ? 'disabled' : ''}>${escapeHTML(value)}</button>
         `).join('')}
       </div>
     </div>
@@ -959,12 +1240,30 @@ function renderInspector() {
 }
 
 function bindEvents() {
+  document.querySelectorAll<HTMLButtonElement>('[data-workspace]').forEach((button) => {
+    button.addEventListener('click', () => void switchWorkspace(button.dataset.workspace as WorkspaceMode));
+  });
+  document.querySelector('#live-start')?.addEventListener('click', () => void startLiveSession());
+  document.querySelector('#live-stop')?.addEventListener('click', () => void stopLiveSession());
+  document.querySelector('#live-input')?.addEventListener('change', () => {
+    state.liveInput = inputValue('live-input', '');
+  });
+  document.querySelector('#live-sensitivity')?.addEventListener('change', () => {
+    state.liveSensitivity = inputValue('live-sensitivity', 'low');
+  });
+  document.querySelector('#live-intensity')?.addEventListener('change', () => {
+    state.liveIntensity = inputValue('live-intensity', 'auto');
+  });
   document.querySelector('#choose-song')?.addEventListener('click', chooseSong);
   document.querySelector('#regenerate')?.addEventListener('click', regenerate);
   document.querySelector('#save')?.addEventListener('click', saveTimeline);
   document.querySelector('#discover-devices')?.addEventListener('click', discoverDevices);
   document.querySelector('#style')?.addEventListener('change', () => {
-    const selectedStyle = inputValue('style', state.session?.style ?? state.styles[0] ?? 'synthwave');
+    const selectedStyle = inputValue('style', state.workspaceMode === 'live' ? state.liveStyle : state.session?.style ?? state.styles[0] ?? 'synthwave');
+    if (state.workspaceMode === 'live') {
+      state.liveStyle = selectedStyle;
+      return;
+    }
     if (state.session) {
       state.session.style = selectedStyle;
     }
@@ -1135,6 +1434,75 @@ function bindEvents() {
   });
 
   bindInspector();
+}
+
+async function switchWorkspace(mode: WorkspaceMode) {
+  if (mode === state.workspaceMode) return;
+  if (mode === 'live') {
+    stopPlayback(false);
+    state.workspaceMode = 'live';
+    state.inspectorOpen = false;
+    state.status = 'Loading microphone inputs';
+    render();
+    if (state.liveInputs.length === 0) {
+      try {
+        state.liveInputs = await LiveInputs() as unknown as LiveInput[];
+        const defaultInput = state.liveInputs.find((input) => input.default);
+        state.liveInput = defaultInput?.id ?? '';
+        state.status = 'Live ready';
+      } catch (error) {
+        reportFailure(`Microphone discovery failed: ${readableError(error)}`);
+      }
+    }
+  } else {
+    if (state.liveRunning || state.liveStarting) {
+      state.status = 'Stopping Live';
+      await stopLiveSession(false);
+    }
+    state.workspaceMode = 'timeline';
+    state.status = state.session ? 'Timeline ready' : 'Choose a song to generate a choreography';
+  }
+  render();
+}
+
+async function startLiveSession() {
+  if (state.liveRunning || state.liveStarting) return;
+  state.liveStarting = true;
+  state.liveState = null;
+  state.liveHistory = [];
+  state.error = null;
+  state.status = 'Starting Maestro Live';
+  render();
+  try {
+    await StartLive({
+      input: state.liveInput,
+      target: targetString(),
+      style: state.liveStyle,
+      intensity: state.liveIntensity,
+      sensitivity: state.liveSensitivity,
+    } as any);
+    state.status = 'Opening microphone';
+  } catch (error) {
+    state.liveRunning = false;
+    state.liveStarting = false;
+    reportFailure(error);
+  }
+  render();
+}
+
+async function stopLiveSession(shouldRender = true) {
+  state.liveStarting = true;
+  state.status = 'Stopping Live and restoring lights';
+  if (shouldRender) render();
+  try {
+    await StopLive();
+  } catch (error) {
+    reportFailure(error);
+  }
+  state.liveRunning = false;
+  state.liveStarting = false;
+  state.status = 'Live stopped';
+  if (shouldRender) render();
 }
 
 function bindInspector() {

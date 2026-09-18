@@ -10,7 +10,7 @@ The current implementation can:
 - generate deterministic timeline JSON
 - play timelines against LIFX LAN devices
 - perform audio and lighting together from the same audio clock
-- react continuously to microphone audio through the CLI-first Maestro Live mode
+- react continuously to microphone audio through Maestro Live in the desktop app or CLI
 - discover device capabilities for single-zone, multizone, and matrix devices
 - render generated effects into whole-device, zone, or matrix timeline actions
 - run in dry-run mode without touching real lights
@@ -252,6 +252,11 @@ or creating a timeline file:
 ```bash
 go run ./cmd/maestro live --target all
 ```
+
+The desktop app exposes the same engine in its **Live** workspace. Select targets,
+microphone, sensitivity, style, and dynamics, then start Live from the transport.
+The workspace displays the learned floor, input margin, frequency bands, tempo,
+and recent signal history without replacing the current editable timeline.
 
 Options:
 

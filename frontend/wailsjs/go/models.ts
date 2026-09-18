@@ -41,7 +41,7 @@ export namespace analysis {
 	    static createFrom(source: any = {}) {
 	        return new Stream(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -49,7 +49,7 @@ export namespace analysis {
 	        this.energy = this.convertValues(source["energy"], EnergyPoint);
 	        this.accents = source["accents"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -100,11 +100,11 @@ export namespace analysis {
 	    dynamics?: TrackDynamics;
 	    sections?: Section[];
 	    streams?: Stream[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new SongAnalysis(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.duration_ms = source["duration_ms"];
@@ -115,7 +115,7 @@ export namespace analysis {
 	        this.sections = this.convertValues(source["sections"], Section);
 	        this.streams = this.convertValues(source["streams"], Stream);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -135,18 +135,19 @@ export namespace analysis {
 		}
 	}
 
+
 }
 
 export namespace generation {
-	
+
 	export class StreamAssignment {
 	    stream: string;
 	    device_ids: string[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new StreamAssignment(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.stream = source["stream"];
@@ -157,7 +158,7 @@ export namespace generation {
 }
 
 export namespace main {
-	
+
 	export class EditorDeviceCapabilities {
 	    kind: string;
 	    has_color: boolean;
@@ -166,11 +167,11 @@ export namespace main {
 	    matrix_width: number;
 	    matrix_height: number;
 	    matrix_length: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new EditorDeviceCapabilities(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.kind = source["kind"];
@@ -188,11 +189,11 @@ export namespace main {
 	    group: string;
 	    location: string;
 	    capabilities: EditorDeviceCapabilities;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new EditorDevice(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -201,7 +202,7 @@ export namespace main {
 	        this.location = source["location"];
 	        this.capabilities = this.convertValues(source["capabilities"], EditorDeviceCapabilities);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -220,17 +221,17 @@ export namespace main {
 		    return a;
 		}
 	}
-	
+
 	export class EditorEvent {
 	    time_ms: number;
 	    target: string;
 	    action: string;
 	    params?: Record<string, any>;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new EditorEvent(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.time_ms = source["time_ms"];
@@ -245,11 +246,11 @@ export namespace main {
 	    beats: number;
 	    sections: number;
 	    events: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new EditorSummary(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.bpm = source["bpm"];
@@ -263,18 +264,18 @@ export namespace main {
 	    name: string;
 	    duration_ms: number;
 	    events: EditorEvent[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new EditorTimeline(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
 	        this.duration_ms = source["duration_ms"];
 	        this.events = this.convertValues(source["events"], EditorEvent);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -307,11 +308,11 @@ export namespace main {
 	    generated: string;
 	    source: string;
 	    event_stats: Record<string, number>;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new EditorSession(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.song_path = source["song_path"];
@@ -328,7 +329,7 @@ export namespace main {
 	        this.source = source["source"];
 	        this.event_stats = source["event_stats"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -347,24 +348,60 @@ export namespace main {
 		    return a;
 		}
 	}
-	
-	
+
+
+	export class LiveInput {
+	    id: string;
+	    name: string;
+	    default: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new LiveInput(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.default = source["default"];
+	    }
+	}
+	export class LiveRequest {
+	    input: string;
+	    target: string;
+	    style: string;
+	    intensity: string;
+	    sensitivity: string;
+
+	    static createFrom(source: any = {}) {
+	        return new LiveRequest(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.input = source["input"];
+	        this.target = source["target"];
+	        this.style = source["style"];
+	        this.intensity = source["intensity"];
+	        this.sensitivity = source["sensitivity"];
+	    }
+	}
 	export class PreviewRequest {
 	    audio_path: string;
 	    target: string;
 	    timeline: EditorTimeline;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new PreviewRequest(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.audio_path = source["audio_path"];
 	        this.target = source["target"];
 	        this.timeline = this.convertValues(source["timeline"], EditorTimeline);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -386,17 +423,17 @@ export namespace main {
 	export class SaveTimelineRequest {
 	    path: string;
 	    timeline: EditorTimeline;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new SaveTimelineRequest(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.path = source["path"];
 	        this.timeline = this.convertValues(source["timeline"], EditorTimeline);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;

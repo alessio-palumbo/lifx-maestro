@@ -93,7 +93,12 @@ func (s *MicrophoneSource) Run(ctx context.Context, output chan<- PCMChunk) erro
 	deviceConfig.PeriodSizeInMilliseconds = uint32(max(s.config.PeriodDuration.Milliseconds(), 1))
 	deviceConfig.PerformanceProfile = malgo.LowLatency
 	deviceConfig.Alsa.NoMMap = 1
+	var deviceIDPin runtime.Pinner
 	if selected != nil {
+		// malgo stores this pointer in a C device config during initialization.
+		// Keep the Go-owned ID pinned until the native device is uninitialized.
+		deviceIDPin.Pin(&selected.ID)
+		defer deviceIDPin.Unpin()
 		deviceConfig.Capture.DeviceID = unsafe.Pointer(&selected.ID)
 	}
 
@@ -115,7 +120,6 @@ func (s *MicrophoneSource) Run(ctx context.Context, output chan<- PCMChunk) erro
 	}}
 
 	device, err := malgo.InitDevice(malgoContext.Context, deviceConfig, callbacks)
-	runtime.KeepAlive(selected)
 	if err != nil {
 		return fmt.Errorf("open microphone %q: %w", s.Name(), err)
 	}

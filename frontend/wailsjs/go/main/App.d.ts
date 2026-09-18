@@ -24,6 +24,8 @@ export function GenerateFromAnalysis(arg1:string,arg2:analysis.SongAnalysis,arg3
 
 export function GenerationModes():Promise<Array<string>>;
 
+export function LiveInputs():Promise<Array<main.LiveInput>>;
+
 export function MasterBrightness():Promise<number>;
 
 export function PausePreview():Promise<void>;
@@ -36,7 +38,11 @@ export function SetMasterBrightness(arg1:number):Promise<void>;
 
 export function StartAudioPreview(arg1:string):Promise<void>;
 
+export function StartLive(arg1:main.LiveRequest):Promise<void>;
+
 export function StartPreview(arg1:main.PreviewRequest):Promise<void>;
+
+export function StopLive():Promise<void>;
 
 export function StopPreview():Promise<void>;
 

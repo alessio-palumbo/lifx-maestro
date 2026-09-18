@@ -9,7 +9,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/urfave/cli/v3"
@@ -209,13 +208,6 @@ func liveCommand() *cli.Command {
 			if len(selected) == 0 {
 				return fmt.Errorf("target %q contains no controllable lights", cmd.String("target"))
 			}
-			resolvedTarget := deviceIDs(selected)
-			restore := setupStateRestore(controller, resolvedTarget)
-			defer restore()
-			if err := powerOnDevices(controller, selected); err != nil {
-				return err
-			}
-
 			analyzerConfig, err := newAnalyzer(cmd)
 			if err != nil {
 				return err
@@ -235,25 +227,20 @@ func liveCommand() *cli.Command {
 			}
 
 			source := livemode.NewMicrophoneSource(livemode.MicrophoneConfig{Device: cmd.String("input")})
-			player := playback.NewPlayer(controller, playback.Options{Verbose: false, Out: os.Stdout})
-			dispatcher := livemode.NewDispatcher(player, func(event timeline.Event, err error) {
-				fmt.Fprintf(os.Stderr, "maestro: live event target=%s: %v\n", event.Target, err)
-			})
-			observer := newLiveDiagnostics(cmd.Bool("verbose"), source, cmd.String("target"), dispatcher, os.Stdout)
-			engine, err := livemode.NewEngine(livemode.EngineConfig{
-				Source:    source,
-				Analyzer:  analyzer,
-				Tracker:   livemode.NewStateTracker(trackerConfig),
-				Generator: generator,
-				Sink:      dispatcher,
-				Observer:  observer,
+			session, err := livemode.NewSession(livemode.SessionConfig{
+				Controller: controller, Devices: selected, Source: source, Analyzer: analyzer,
+				Tracker: livemode.NewStateTracker(trackerConfig), Generator: generator,
+				OnDispatchError: func(event timeline.Event, err error) {
+					fmt.Fprintf(os.Stderr, "maestro: live event target=%s: %v\n", event.Target, err)
+				},
 			})
 			if err != nil {
 				_ = analyzer.Close()
 				return err
 			}
+			session.SetObserver(newLiveDiagnostics(cmd.Bool("verbose"), source, cmd.String("target"), session.Dispatcher(), os.Stdout))
 			fmt.Fprintf(os.Stdout, "listening on %s for target %s; press Ctrl-C to stop\n", source.Name(), cmd.String("target"))
-			return engine.Run(ctx)
+			return session.Run(ctx)
 		},
 	}
 }
@@ -286,35 +273,6 @@ func liveDeviceController(dryRun bool) (devices.DeviceController, devices.Capabi
 		return nil, nil, nil, err
 	}
 	return controller, controller, func() { closeController(controller) }, nil
-}
-
-func deviceIDs(infos []devices.DeviceInfo) string {
-	ids := make([]string, 0, len(infos))
-	for _, info := range infos {
-		ids = append(ids, info.ID)
-	}
-	return strings.Join(ids, ",")
-}
-
-func powerOnDevices(controller devices.DeviceController, infos []devices.DeviceInfo) error {
-	var wg sync.WaitGroup
-	errs := make(chan error, len(infos))
-	for _, info := range infos {
-		info := info
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := controller.PowerOn(info.ID); err != nil {
-				errs <- fmt.Errorf("power on %s: %w", displayName(info), err)
-			}
-		}()
-	}
-	wg.Wait()
-	close(errs)
-	for err := range errs {
-		return err
-	}
-	return nil
 }
 
 type liveDiagnostics struct {

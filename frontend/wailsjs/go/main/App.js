@@ -42,6 +42,10 @@ export function GenerationModes() {
   return window['go']['main']['App']['GenerationModes']();
 }
 
+export function LiveInputs() {
+  return window['go']['main']['App']['LiveInputs']();
+}
+
 export function MasterBrightness() {
   return window['go']['main']['App']['MasterBrightness']();
 }
@@ -66,8 +70,16 @@ export function StartAudioPreview(arg1) {
   return window['go']['main']['App']['StartAudioPreview'](arg1);
 }
 
+export function StartLive(arg1) {
+  return window['go']['main']['App']['StartLive'](arg1);
+}
+
 export function StartPreview(arg1) {
   return window['go']['main']['App']['StartPreview'](arg1);
+}
+
+export function StopLive() {
+  return window['go']['main']['App']['StopLive']();
 }
 
 export function StopPreview() {
