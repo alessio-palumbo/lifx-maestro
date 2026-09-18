@@ -77,7 +77,7 @@ type StateTracker struct {
 	pendingTempo    float64
 	pendingSince    time.Duration
 	nextBeatAt      time.Duration
-	clockHoldUntil  time.Duration
+	tempoOnsets     []time.Duration
 	activeSince     time.Duration
 	sustainedUntil  time.Duration
 	presenceUntil   time.Duration
@@ -120,7 +120,6 @@ const (
 	sustainedInputMinimum      = 0.03
 	sustainedAttackDuration    = 650 * time.Millisecond
 	sustainedReleaseDuration   = 800 * time.Millisecond
-	beatClockHoldDuration      = 1500 * time.Millisecond
 	tempoSwitchDuration        = 2500 * time.Millisecond
 	tempoAcquireDuration       = 1200 * time.Millisecond
 	activityWindowDuration     = 4 * time.Second
@@ -209,13 +208,18 @@ func (t *StateTracker) Update(features Features) State {
 	}
 	t.fluxBaseline = lerp(t.fluxBaseline, features.OnsetStrength, fluxRate)
 
-	t.updateTempo(features)
+	t.updateTempo(features, onset)
 	// Confidence controls whether a new estimate may retune the clock. Once a
 	// plausible pulse is established, keep it through ambiguous active sections;
 	// an older clock is less disruptive than dropping rhythmic output entirely.
 	reportedTempo := t.tempo
 	observedBeat := onset || (features.Beat && features.TempoConfidence >= minimumTempoConfidence)
-	beat := t.updateBeatClock(features.At, reportedTempo, observedBeat, sustained && continuousInput)
+	recentRMSDB := features.RMSDB
+	if features.HasRecentRMS {
+		recentRMSDB = features.RecentRMSDB
+	}
+	recentInput := gatedLevel(recentRMSDB, t.noiseFloorDB, t.config) > 0
+	beat := t.updateBeatClock(features.At, reportedTempo, observedBeat, recentInput)
 	activity, intensity, dynamics, novelty, sectionChange := t.updateInterpretation(features.At, onset, sustained)
 
 	trend := clamp(t.energy-t.lastEnergy, -1, 1)
@@ -376,12 +380,22 @@ func dynamicsRank(level DynamicsLevel) int {
 	}
 }
 
-func (t *StateTracker) updateTempo(features Features) {
+func (t *StateTracker) updateTempo(features Features, onset bool) {
 	candidate, confidence := selectTempoCandidate(features.TempoCandidates, t.tempo)
 	fromAlternatives := candidate > 0
 	if candidate == 0 && features.TempoConfidence >= minimumTempoConfidence && features.TempoBPM >= 40 && features.TempoBPM <= 240 {
 		candidate = stabilizeTempo(features.TempoBPM)
 		confidence = features.TempoConfidence
+	}
+	onsetCandidate, onsetConfidence := t.onsetTempoCandidate(features.At, onset)
+	if onsetCandidate > 0 && (candidate == 0 || relativeTempoDistance(onsetCandidate, candidate) <= 0.08) {
+		if candidate == 0 {
+			candidate = onsetCandidate
+			fromAlternatives = false
+		} else {
+			candidate = lerp(candidate, onsetCandidate, 0.35)
+		}
+		confidence = math.Max(confidence, onsetConfidence)
 	}
 	if candidate == 0 || confidence < minimumTempoConfidence {
 		t.tempoConfidence *= tempoConfidenceDecay
@@ -416,6 +430,56 @@ func (t *StateTracker) updateTempo(features Features) {
 	} else {
 		t.tempoConfidence = lerp(t.tempoConfidence, confidence, 0.2)
 	}
+}
+
+func (t *StateTracker) onsetTempoCandidate(at time.Duration, onset bool) (float64, float64) {
+	if !onset {
+		return 0, 0
+	}
+	if len(t.tempoOnsets) > 0 {
+		gap := at - t.tempoOnsets[len(t.tempoOnsets)-1]
+		if gap < 300*time.Millisecond {
+			return 0, 0
+		}
+		if gap > 1500*time.Millisecond {
+			t.tempoOnsets = t.tempoOnsets[:0]
+		}
+	}
+	t.tempoOnsets = append(t.tempoOnsets, at)
+	if len(t.tempoOnsets) > 6 {
+		t.tempoOnsets = append(t.tempoOnsets[:0], t.tempoOnsets[len(t.tempoOnsets)-6:]...)
+	}
+	if len(t.tempoOnsets) < 4 {
+		return 0, 0
+	}
+
+	intervals := make([]time.Duration, 0, len(t.tempoOnsets)-1)
+	for index := 1; index < len(t.tempoOnsets); index++ {
+		intervals = append(intervals, t.tempoOnsets[index]-t.tempoOnsets[index-1])
+	}
+	slices.Sort(intervals)
+	median := intervals[len(intervals)/2]
+	if len(intervals)%2 == 0 {
+		median = (intervals[len(intervals)/2-1] + median) / 2
+	}
+	if median <= 0 {
+		return 0, 0
+	}
+	maximumDeviation := 0.0
+	for _, interval := range intervals {
+		deviation := math.Abs(float64(interval-median)) / float64(median)
+		maximumDeviation = math.Max(maximumDeviation, deviation)
+	}
+	if maximumDeviation > 0.18 {
+		return 0, 0
+	}
+	bpm := float64(time.Minute) / float64(median)
+	if bpm < 40 || bpm > 200 {
+		return 0, 0
+	}
+	support := math.Min(1, float64(len(intervals))/4)
+	confidence := clamp((1-maximumDeviation/0.18)*support, 0, 1)
+	return bpm, confidence
 }
 
 func selectTempoCandidate(candidates []TempoCandidate, current float64) (float64, float64) {
@@ -512,22 +576,13 @@ func (t *StateTracker) updateSustained(at time.Duration, continuous bool) bool {
 	return t.sustainedUntil > 0 && at <= t.sustainedUntil
 }
 
-func (t *StateTracker) updateBeatClock(at time.Duration, bpm float64, observed, sustained bool) bool {
+func (t *StateTracker) updateBeatClock(at time.Duration, bpm float64, observed, recentInput bool) bool {
 	if bpm < 40 || bpm > 240 {
 		t.nextBeatAt = 0
 		return false
 	}
 	period := time.Duration(float64(time.Minute) / bpm)
-	if sustained {
-		t.clockHoldUntil = at + beatClockHoldDuration
-	} else if observed {
-		hold := beatClockHoldDuration
-		if 2*period > hold {
-			hold = 2 * period
-		}
-		t.clockHoldUntil = at + hold
-	}
-	if t.clockHoldUntil == 0 || at > t.clockHoldUntil {
+	if !recentInput {
 		t.nextBeatAt = 0
 		return observed
 	}

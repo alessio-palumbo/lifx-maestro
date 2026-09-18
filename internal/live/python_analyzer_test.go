@@ -40,6 +40,9 @@ func TestPythonAnalyzerUsesPersistentBinaryProtocol(t *testing.T) {
 		if features.LowDB != -30 || !features.Beat {
 			t.Fatalf("response %d = %+v", index, features)
 		}
+		if !features.HasRecentRMS || features.RecentRMSDB != -22 {
+			t.Fatalf("response %d recent RMS = %.1f (available=%t)", index, features.RecentRMSDB, features.HasRecentRMS)
+		}
 		if len(features.TempoCandidates) != 1 || features.TempoCandidates[0].BPM != 80 {
 			t.Fatalf("response %d tempo candidates = %+v", index, features.TempoCandidates)
 		}
@@ -71,9 +74,11 @@ func TestPythonAnalyzerHelper(t *testing.T) {
 		if sampleRate == 0 || len(samples) == 0 {
 			os.Exit(2)
 		}
+		recentRMSDB := -22.0
 		_ = json.NewEncoder(os.Stdout).Encode(liveFeatureResponse{
 			AtMS:            time.Duration(endNS).Milliseconds(),
 			RMSDB:           -24,
+			RecentRMSDB:     &recentRMSDB,
 			LowDB:           -30,
 			MidDB:           -40,
 			HighDB:          -50,

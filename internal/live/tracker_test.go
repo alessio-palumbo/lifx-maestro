@@ -1,6 +1,7 @@
 package live
 
 import (
+	"math"
 	"testing"
 	"time"
 )
@@ -438,6 +439,65 @@ func TestStateTrackerContinuesBeatClockBetweenReliableObservations(t *testing.T)
 	}
 }
 
+func TestStateTrackerAcquiresTempoFromConsistentOnsets(t *testing.T) {
+	tracker := NewStateTracker(DefaultTrackerConfig())
+	var state State
+	for index := 0; index < 4; index++ {
+		state = tracker.Update(Features{
+			At:            time.Second + time.Duration(index)*750*time.Millisecond,
+			RMSDB:         -20,
+			RecentRMSDB:   -20,
+			HasRecentRMS:  true,
+			LowDB:         -25,
+			MidDB:         -22,
+			HighDB:        -28,
+			OnsetStrength: 0.8,
+			Onset:         true,
+		})
+		if !state.Onset {
+			t.Fatalf("tap %d was not emitted as an onset", index+1)
+		}
+	}
+	if math.Abs(state.TempoBPM-80) > 0.1 {
+		t.Fatalf("tempo after consistent taps = %.1f, want 80", state.TempoBPM)
+	}
+	if !state.Beat {
+		t.Fatal("tempo-acquiring tap did not anchor the beat clock")
+	}
+}
+
+func TestStateTrackerSuppressesPredictedBeatWhenRecentInputStops(t *testing.T) {
+	tracker := NewStateTracker(DefaultTrackerConfig())
+	tracker.Update(Features{
+		At:              time.Second,
+		RMSDB:           -20,
+		RecentRMSDB:     -20,
+		HasRecentRMS:    true,
+		LowDB:           -25,
+		MidDB:           -22,
+		HighDB:          -28,
+		OnsetStrength:   0.8,
+		Onset:           true,
+		TempoBPM:        120,
+		TempoConfidence: 0.9,
+	})
+	state := tracker.Update(Features{
+		At:           1500 * time.Millisecond,
+		RMSDB:        -20,
+		RecentRMSDB:  -90,
+		HasRecentRMS: true,
+		LowDB:        -25,
+		MidDB:        -22,
+		HighDB:       -28,
+	})
+	if state.Beat {
+		t.Fatal("rolling-window energy produced a predicted beat after recent input stopped")
+	}
+	if state.TempoBPM == 0 {
+		t.Fatal("silence discarded the learned tempo instead of only suspending its clock")
+	}
+}
+
 func TestStateTrackerUsesExplicitOnsetOnlyOnceAcrossOverlappingWindows(t *testing.T) {
 	tracker := NewStateTracker(DefaultTrackerConfig())
 	onsets := 0
@@ -506,7 +566,7 @@ func TestStateTrackerStopsPredictedClockAfterInputEnds(t *testing.T) {
 		})
 	}
 
-	beatsAfterHold := 0
+	beatsAfterSilence := 0
 	for i := 0; i < 35; i++ {
 		state := tracker.Update(Features{
 			At:     2*time.Second + time.Duration(i)*100*time.Millisecond,
@@ -515,12 +575,12 @@ func TestStateTrackerStopsPredictedClockAfterInputEnds(t *testing.T) {
 			MidDB:  -90,
 			HighDB: -90,
 		})
-		if state.At >= 4*time.Second && state.Beat {
-			beatsAfterHold++
+		if state.Beat {
+			beatsAfterSilence++
 		}
 	}
-	if beatsAfterHold != 0 {
-		t.Fatalf("predicted beats after hold expired = %d", beatsAfterHold)
+	if beatsAfterSilence != 0 {
+		t.Fatalf("predicted beats after silence = %d, want none", beatsAfterSilence)
 	}
 }
 

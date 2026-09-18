@@ -120,15 +120,16 @@ func (a *PythonAnalyzer) processError(operation string, err error) error {
 }
 
 type liveFeatureResponse struct {
-	AtMS            int64   `json:"at_ms"`
-	RMSDB           float64 `json:"rms_db"`
-	LowDB           float64 `json:"low_db"`
-	MidDB           float64 `json:"mid_db"`
-	HighDB          float64 `json:"high_db"`
-	OnsetStrength   float64 `json:"onset_strength"`
-	Onset           bool    `json:"onset"`
-	TempoBPM        float64 `json:"tempo_bpm"`
-	TempoConfidence float64 `json:"tempo_confidence"`
+	AtMS            int64    `json:"at_ms"`
+	RMSDB           float64  `json:"rms_db"`
+	RecentRMSDB     *float64 `json:"recent_rms_db"`
+	LowDB           float64  `json:"low_db"`
+	MidDB           float64  `json:"mid_db"`
+	HighDB          float64  `json:"high_db"`
+	OnsetStrength   float64  `json:"onset_strength"`
+	Onset           bool     `json:"onset"`
+	TempoBPM        float64  `json:"tempo_bpm"`
+	TempoConfidence float64  `json:"tempo_confidence"`
 	TempoCandidates []struct {
 		BPM        float64 `json:"bpm"`
 		Confidence float64 `json:"confidence"`
@@ -149,6 +150,10 @@ func (r liveFeatureResponse) features() Features {
 		TempoBPM:        r.TempoBPM,
 		TempoConfidence: r.TempoConfidence,
 		Beat:            r.Beat,
+	}
+	if r.RecentRMSDB != nil {
+		features.RecentRMSDB = *r.RecentRMSDB
+		features.HasRecentRMS = true
 	}
 	for _, candidate := range r.TempoCandidates {
 		features.TempoCandidates = append(features.TempoCandidates, TempoCandidate{

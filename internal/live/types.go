@@ -23,6 +23,8 @@ type PCMWindow struct {
 type Features struct {
 	At              time.Duration
 	RMSDB           float64
+	RecentRMSDB     float64
+	HasRecentRMS    bool
 	LowDB           float64
 	MidDB           float64
 	HighDB          float64

@@ -104,6 +104,8 @@ class LiveWindowAnalyzer:
         frequencies = np.fft.rfftfreq(len(samples), d=1.0 / sample_rate)
         window_gain = float(np.sqrt(np.mean(np.square(window))))
         rms = float(np.sqrt(np.mean(np.square(samples, dtype=np.float64))))
+        recent_size = min(len(samples), max(1, int(round(sample_rate * LIVE_DEFAULT_HOP_SECONDS))))
+        recent_rms = float(np.sqrt(np.mean(np.square(samples[-recent_size:], dtype=np.float64))))
 
         flux, accepted_transient = self.analyze_onset(samples, sample_rate, at_seconds)
 
@@ -114,6 +116,7 @@ class LiveWindowAnalyzer:
         return {
             "at_ms": int(round(at_seconds * 1000)),
             "rms_db": amplitude_db(rms),
+            "recent_rms_db": amplitude_db(recent_rms),
             "low_db": band_db(magnitude, frequencies, 20, 250, window_gain),
             "mid_db": band_db(magnitude, frequencies, 250, 4000, window_gain),
             "high_db": band_db(magnitude, frequencies, 4000, min(12000, sample_rate / 2), window_gain),
@@ -246,6 +249,7 @@ class LiveWindowAnalyzer:
         return {
             "at_ms": int(round(at_seconds * 1000)),
             "rms_db": -120.0,
+            "recent_rms_db": -120.0,
             "low_db": -120.0,
             "mid_db": -120.0,
             "high_db": -120.0,
