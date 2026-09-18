@@ -234,6 +234,7 @@ type AppState = {
   liveSensitivity: string;
   liveRunning: boolean;
   liveStarting: boolean;
+  livePreparingAnalyzer: boolean;
   liveState: LiveAnalysisState | null;
   liveHistory: LiveHistoryPoint[];
 };
@@ -290,6 +291,7 @@ const state: AppState = {
   liveSensitivity: 'low',
   liveRunning: false,
   liveStarting: false,
+  livePreparingAnalyzer: false,
   liveState: null,
   liveHistory: [],
 };
@@ -708,6 +710,17 @@ function renderOverlay() {
       </div>
     `;
   }
+  if (state.livePreparingAnalyzer) {
+    return `
+      <div class="busy-overlay">
+        <div class="busy-modal">
+          <div class="spinner"></div>
+          <strong>Preparing Maestro Live</strong>
+          <span>Completing first-time audio setup. This only happens once.</span>
+        </div>
+      </div>
+    `;
+  }
   if (!state.loading && !state.previewStarting) {
     return '';
   }
@@ -726,9 +739,9 @@ function renderTour() {
   if (!step) {
     return '';
   }
-  // Stand aside for prompts and preview startup. During first generation the
+  // Stand aside for prompts and startup overlays. During first generation the
   // guide intentionally remains above the spinner so the wait has useful context.
-  if (state.previewStarting || state.regenerationPrompt) {
+  if (state.previewStarting || state.livePreparingAnalyzer || state.regenerationPrompt) {
     return '';
   }
 
@@ -1486,6 +1499,8 @@ async function startLiveSession() {
   state.error = null;
   state.status = 'Starting Maestro Live';
   render();
+  state.livePreparingAnalyzer = await analyzerPreparing();
+  if (state.livePreparingAnalyzer) render();
   try {
     await StartLive({
       input: state.liveInput,
@@ -1499,6 +1514,8 @@ async function startLiveSession() {
     state.liveRunning = false;
     state.liveStarting = false;
     reportFailure(error);
+  } finally {
+    state.livePreparingAnalyzer = false;
   }
   render();
 }
