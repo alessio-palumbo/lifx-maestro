@@ -103,6 +103,7 @@ type LiveAnalysisState = {
   input: string;
   input_db: number;
   noise_floor_db: number;
+  energy_threshold_db: number;
   margin_db: number;
   energy: number;
   presence: number;
@@ -517,6 +518,10 @@ function iconSVG(name: 'play' | 'pause' | 'stop' | 'sun' | 'microphone') {
 
 function renderLiveWorkspace() {
   const live = state.liveState;
+  const floorDB = live?.noise_floor_db ?? -60;
+  const thresholdDB = live?.energy_threshold_db ?? -48;
+  const floorPosition = dbPosition(floorDB);
+  const thresholdPosition = dbPosition(thresholdDB);
   const inputOptions = [
     '<option value="">System default</option>',
     ...state.liveInputs.map((input) => `<option value="${escapeAttr(input.id)}" ${state.liveInput === input.id ? 'selected' : ''}>${escapeHTML(input.name)}${input.default ? ' (default)' : ''}</option>`),
@@ -540,14 +545,26 @@ function renderLiveWorkspace() {
           <label class="field live-field"><span>Dynamics</span><select id="live-intensity" ${disabled}>${intensityOptions}</select></label>
         </div>
       </section>
-      <section id="live-signal" class="live-signal ${live?.beat ? 'accent' : ''}">
+      <section id="live-signal" class="live-signal">
         <div class="live-primary">
-          <div class="live-primary-value"><strong id="live-energy">${livePercent(live?.energy ?? 0)}</strong><span>Energy</span></div>
+          <div class="live-primary-value">
+            <div class="live-energy-value"><strong id="live-energy">${livePercent(live?.energy ?? 0)}</strong><span>Energy</span></div>
+          </div>
           <div class="level-track" aria-label="Input level and noise floor">
             <div id="live-level-fill" class="level-fill" style="width:${dbPosition(live?.input_db ?? -90)}%"></div>
-            <span id="live-floor-marker" class="floor-marker" style="left:${dbPosition(live?.noise_floor_db ?? -60)}%"></span>
+            <span id="live-gate-zone" class="gate-zone" style="left:${floorPosition}%;width:${Math.max(thresholdPosition - floorPosition, 0)}%"></span>
+            <span id="live-floor-marker" class="level-marker floor-marker" style="left:${floorPosition}%"></span>
+            <span id="live-threshold-marker" class="level-marker threshold-marker" style="left:${thresholdPosition}%"></span>
           </div>
-          <div class="level-labels"><span id="live-input-db">${formatDB(live?.input_db)}</span><span id="live-floor-db">Floor ${formatDB(live?.noise_floor_db)}</span></div>
+          <div class="level-legend">
+            <span><i class="input-key"></i>Input <strong id="live-input-db">${formatDBFS(live?.input_db)}</strong></span>
+            <span><i class="floor-key"></i>Floor <strong id="live-floor-db">${formatDBFS(floorDB)}</strong></span>
+            <span><i class="threshold-key"></i>Energy threshold <strong id="live-threshold-db">${formatThresholdDB(thresholdDB, floorDB)}</strong></span>
+          </div>
+          <div class="rhythm-rails" aria-label="Detected rhythm events">
+            <div class="rhythm-rail beat-rail"><span>Beat</span><div><i id="live-beat-pulse"></i></div></div>
+            <div class="rhythm-rail onset-rail"><span>Onset</span><div><i id="live-onset-pulse"></i></div></div>
+          </div>
         </div>
         <div class="band-meters">
           ${renderLiveBand('low', 'Low', live?.low ?? 0)}
@@ -560,12 +577,12 @@ function renderLiveWorkspace() {
         <canvas id="live-history" class="live-history" aria-label="Recent live energy history"></canvas>
       </section>
       <section class="live-diagnostics">
-        ${renderLiveMetric('live-tempo', 'Tempo', live?.tempo_bpm ? `${live.tempo_bpm.toFixed(1)} BPM` : '—')}
-        ${renderLiveMetric('live-confidence', 'Confidence', livePercent(live?.tempo_confidence ?? 0))}
-        ${renderLiveMetric('live-dynamics', 'Dynamics', capitalize(live?.dynamics ?? 'calm'))}
-        ${renderLiveMetric('live-margin', 'Noise margin', live ? `${live.margin_db.toFixed(1)} dB` : '—')}
-        ${renderLiveMetric('live-presence', 'Presence', livePercent(live?.presence ?? 0))}
-        ${renderLiveMetric('live-activity', 'Activity', livePercent(live?.activity ?? 0))}
+        ${renderLiveMetric('live-tempo', 'Tempo', live?.tempo_bpm ? `${live.tempo_bpm.toFixed(1)} BPM` : '—', 'Estimated pulse rate currently driving the beat clock.')}
+        ${renderLiveMetric('live-confidence', 'Confidence', livePercent(live?.tempo_confidence ?? 0), 'How strongly recent audio supports the current tempo estimate.')}
+        ${renderLiveMetric('live-dynamics', 'Dynamics', capitalize(live?.dynamics ?? 'calm'), 'Inferred calm, balanced, or energetic behavior used by the light show.')}
+        ${renderLiveMetric('live-margin', 'Noise margin', live ? `${live.margin_db.toFixed(1)} dB` : '—', 'Current input level above the learned ambient noise floor.')}
+        ${renderLiveMetric('live-presence', 'Presence', livePercent(live?.presence ?? 0), 'Smoothed strength of meaningful audio above ambient noise.')}
+        ${renderLiveMetric('live-activity', 'Activity', livePercent(live?.activity ?? 0), 'Density of detected sound attacks during the last four seconds.')}
       </section>
     </main>
   `;
@@ -575,8 +592,8 @@ function renderLiveBand(id: string, label: string, value: number) {
   return `<div class="band-meter"><div class="band-label"><span>${label}</span><strong id="live-${id}-value">${livePercent(value)}</strong></div><div class="band-track"><span id="live-${id}-fill" style="width:${clamp(value, 0, 1) * 100}%"></span></div></div>`;
 }
 
-function renderLiveMetric(id: string, label: string, value: string) {
-  return `<div class="live-metric"><span>${label}</span><strong id="${id}">${escapeHTML(value)}</strong></div>`;
+function renderLiveMetric(id: string, label: string, value: string, description: string) {
+  return `<div class="live-metric" title="${escapeAttr(description)}"><span>${label}</span><strong id="${id}">${escapeHTML(value)}</strong></div>`;
 }
 
 function liveStatusLabel() {
@@ -595,11 +612,21 @@ function updateLiveDisplay() {
   setText('live-status', liveStatusLabel());
   document.querySelector('#live-status')?.classList.toggle('active', live.active);
   setText('live-energy', livePercent(live.energy));
-  setText('live-input-db', formatDB(live.input_db));
-  setText('live-floor-db', `Floor ${formatDB(live.noise_floor_db)}`);
+  setText('live-input-db', formatDBFS(live.input_db));
+  setText('live-floor-db', formatDBFS(live.noise_floor_db));
+  setText('live-threshold-db', formatThresholdDB(live.energy_threshold_db, live.noise_floor_db));
   setWidth('live-level-fill', dbPosition(live.input_db));
+  const floorPosition = dbPosition(live.noise_floor_db);
+  const thresholdPosition = dbPosition(live.energy_threshold_db);
   const floorMarker = document.querySelector<HTMLElement>('#live-floor-marker');
-  if (floorMarker) floorMarker.style.left = `${dbPosition(live.noise_floor_db)}%`;
+  if (floorMarker) floorMarker.style.left = `${floorPosition}%`;
+  const thresholdMarker = document.querySelector<HTMLElement>('#live-threshold-marker');
+  if (thresholdMarker) thresholdMarker.style.left = `${thresholdPosition}%`;
+  const gateZone = document.querySelector<HTMLElement>('#live-gate-zone');
+  if (gateZone) {
+    gateZone.style.left = `${floorPosition}%`;
+    gateZone.style.width = `${Math.max(thresholdPosition - floorPosition, 0)}%`;
+  }
   for (const band of ['low', 'mid', 'high'] as const) {
     setText(`live-${band}-value`, livePercent(live[band]));
     setWidth(`live-${band}-fill`, live[band] * 100);
@@ -610,12 +637,22 @@ function updateLiveDisplay() {
   setText('live-margin', `${live.margin_db.toFixed(1)} dB`);
   setText('live-presence', livePercent(live.presence));
   setText('live-activity', livePercent(live.activity));
-  const signal = document.querySelector('#live-signal');
-  signal?.classList.toggle('accent', live.beat || live.onset);
-  if (live.beat || live.onset) window.setTimeout(() => signal?.classList.remove('accent'), 90);
+  if (live.beat) pulseLiveRail('live-beat-pulse', 160);
+  if (live.onset) pulseLiveRail('live-onset-pulse', 90);
   const timecode = document.querySelector('.live-timecode');
   if (timecode) timecode.innerHTML = `${formatTime(live.elapsed_ms)} <span>listening</span>`;
   drawLiveHistory();
+}
+
+function pulseLiveRail(id: string, duration: number) {
+  const pulse = document.querySelector<HTMLElement>(`#${id}`);
+  if (!pulse) return;
+  pulse.getAnimations().forEach((animation) => animation.cancel());
+  pulse.animate([
+    { opacity: 0.35, transform: 'scaleX(0.15)' },
+    { opacity: 1, transform: 'scaleX(1)', offset: 0.35 },
+    { opacity: 0, transform: 'scaleX(1)' },
+  ], { duration, easing: 'ease-out' });
 }
 
 function drawLiveHistory() {
@@ -671,8 +708,12 @@ function dbPosition(value = -90) {
   return clamp((value + 90) / 80 * 100, 0, 100);
 }
 
-function formatDB(value?: number) {
-  return value === undefined ? '—' : `${value.toFixed(1)} dB`;
+function formatDBFS(value?: number) {
+  return value === undefined ? '—' : `${value.toFixed(1)} dBFS`;
+}
+
+function formatThresholdDB(threshold: number, floor: number) {
+  return `${formatDBFS(threshold)} (+${Math.max(threshold - floor, 0).toFixed(0)} dB)`;
 }
 
 function livePercent(value: number) {

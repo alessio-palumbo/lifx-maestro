@@ -49,27 +49,28 @@ const (
 )
 
 type State struct {
-	At              time.Duration
-	InputDB         float64
-	NoiseFloorDB    float64
-	MarginDB        float64
-	Energy          float64
-	Presence        float64
-	Low             float64
-	Mid             float64
-	High            float64
-	Trend           float64
-	Onset           bool
-	Beat            bool
-	TempoBPM        float64
-	TempoConfidence float64
-	Active          bool
-	Sustained       bool
-	Activity        float64
-	Intensity       float64
-	Dynamics        DynamicsLevel
-	Novelty         float64
-	SectionChange   bool
+	At                time.Duration
+	InputDB           float64
+	NoiseFloorDB      float64
+	EnergyThresholdDB float64
+	MarginDB          float64
+	Energy            float64
+	Presence          float64
+	Low               float64
+	Mid               float64
+	High              float64
+	Trend             float64
+	Onset             bool
+	Beat              bool
+	TempoBPM          float64
+	TempoConfidence   float64
+	Active            bool
+	Sustained         bool
+	Activity          float64
+	Intensity         float64
+	Dynamics          DynamicsLevel
+	Novelty           float64
+	SectionChange     bool
 }
 
 type AudioSource interface {

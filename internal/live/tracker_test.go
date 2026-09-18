@@ -119,6 +119,15 @@ func TestTrackerConfigForSensitivityAdjustsNoiseMargin(t *testing.T) {
 	}
 }
 
+func TestStateReportsEnergyThresholdAboveLearnedFloor(t *testing.T) {
+	config := DefaultTrackerConfig()
+	tracker := NewStateTracker(config)
+	state := tracker.Update(Features{At: time.Second, RMSDB: -70, LowDB: -70, MidDB: -70, HighDB: -70})
+	if got, want := state.EnergyThresholdDB, state.NoiseFloorDB+config.GateAboveNoiseDB; got != want {
+		t.Fatalf("energy threshold = %.1f, want %.1f", got, want)
+	}
+}
+
 func TestStateTrackerLetsClapThroughWithoutMovingNoiseFloor(t *testing.T) {
 	tracker := NewStateTracker(DefaultTrackerConfig())
 	for i := 0; i < 80; i++ {

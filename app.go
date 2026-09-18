@@ -173,27 +173,28 @@ type LiveInput struct {
 }
 
 type LiveState struct {
-	ElapsedMS       int64   `json:"elapsed_ms"`
-	Input           string  `json:"input"`
-	InputDB         float64 `json:"input_db"`
-	NoiseFloorDB    float64 `json:"noise_floor_db"`
-	MarginDB        float64 `json:"margin_db"`
-	Energy          float64 `json:"energy"`
-	Presence        float64 `json:"presence"`
-	Low             float64 `json:"low"`
-	Mid             float64 `json:"mid"`
-	High            float64 `json:"high"`
-	TempoBPM        float64 `json:"tempo_bpm"`
-	TempoConfidence float64 `json:"tempo_confidence"`
-	Activity        float64 `json:"activity"`
-	Intensity       float64 `json:"intensity"`
-	Dynamics        string  `json:"dynamics"`
-	Novelty         float64 `json:"novelty"`
-	Active          bool    `json:"active"`
-	Sustained       bool    `json:"sustained"`
-	Onset           bool    `json:"onset"`
-	Beat            bool    `json:"beat"`
-	SectionChange   bool    `json:"section_change"`
+	ElapsedMS         int64   `json:"elapsed_ms"`
+	Input             string  `json:"input"`
+	InputDB           float64 `json:"input_db"`
+	NoiseFloorDB      float64 `json:"noise_floor_db"`
+	EnergyThresholdDB float64 `json:"energy_threshold_db"`
+	MarginDB          float64 `json:"margin_db"`
+	Energy            float64 `json:"energy"`
+	Presence          float64 `json:"presence"`
+	Low               float64 `json:"low"`
+	Mid               float64 `json:"mid"`
+	High              float64 `json:"high"`
+	TempoBPM          float64 `json:"tempo_bpm"`
+	TempoConfidence   float64 `json:"tempo_confidence"`
+	Activity          float64 `json:"activity"`
+	Intensity         float64 `json:"intensity"`
+	Dynamics          string  `json:"dynamics"`
+	Novelty           float64 `json:"novelty"`
+	Active            bool    `json:"active"`
+	Sustained         bool    `json:"sustained"`
+	Onset             bool    `json:"onset"`
+	Beat              bool    `json:"beat"`
+	SectionChange     bool    `json:"section_change"`
 }
 
 type LiveStopped struct {
@@ -388,7 +389,8 @@ func (o *wailsLiveObserver) Observe(state livemode.State) {
 	})
 	wailsruntime.EventsEmit(o.app.ctx, "live:state", LiveState{
 		ElapsedMS: state.At.Milliseconds(), Input: o.source.Name(), InputDB: state.InputDB,
-		NoiseFloorDB: state.NoiseFloorDB, MarginDB: state.MarginDB, Energy: state.Energy,
+		NoiseFloorDB: state.NoiseFloorDB, EnergyThresholdDB: state.EnergyThresholdDB,
+		MarginDB: state.MarginDB, Energy: state.Energy,
 		Presence: state.Presence, Low: state.Low, Mid: state.Mid, High: state.High,
 		TempoBPM: state.TempoBPM, TempoConfidence: state.TempoConfidence,
 		Activity: state.Activity, Intensity: state.Intensity, Dynamics: string(state.Dynamics),
