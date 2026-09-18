@@ -214,14 +214,13 @@ func (a *App) startup(ctx context.Context) {
 	// costs far more, because the OS verifies every library in the bundle and the
 	// analyzer compiles its hot paths. Analyze reports any failure when it
 	// retries, so failures here are silent by design.
-	go func() {
-		_ = a.warmAnalyzer()
-	}()
+	a.startAnalyzerWarmup()
 }
 
 func (a *App) shutdown(ctx context.Context) {
 	a.StopLive()
 	a.StopPreview()
+	a.cancelAnalyzerWarmup()
 
 	a.lifxMu.Lock()
 	controller := a.lifx
@@ -265,7 +264,7 @@ func (a *App) StartLive(request LiveRequest) error {
 
 	a.StopPreview()
 	a.StopLive()
-	a.cancelAnalyzerWarmup()
+	a.waitForAnalyzerWarmup()
 	if _, err := a.ensureAnalyzerInstalled(); err != nil && !errors.Is(err, analyzerbin.ErrNotBundled) {
 		return fmt.Errorf("prepare analyzer: %w", err)
 	}
@@ -378,9 +377,15 @@ type wailsLiveObserver struct {
 	source    *livemode.MicrophoneSource
 	errorMu   sync.Mutex
 	lastError time.Time
+	warmOnce  sync.Once
 }
 
 func (o *wailsLiveObserver) Observe(state livemode.State) {
+	o.warmOnce.Do(func() {
+		if analyzerbin.Bundled() {
+			_ = analyzerbin.MarkWarm()
+		}
+	})
 	wailsruntime.EventsEmit(o.app.ctx, "live:state", LiveState{
 		ElapsedMS: state.At.Milliseconds(), Input: o.source.Name(), InputDB: state.InputDB,
 		NoiseFloorDB: state.NoiseFloorDB, MarginDB: state.MarginDB, Energy: state.Energy,
@@ -508,26 +513,39 @@ func (a *App) Analyze(audioPath string) (analysis.SongAnalysis, error) {
 	return *result, nil
 }
 
-func (a *App) warmAnalyzer() error {
+func (a *App) startAnalyzerWarmup() {
 	if !analyzerbin.Bundled() {
-		return nil
+		return
 	}
 
 	ctx, cancel := context.WithCancel(a.ctx)
 	done := make(chan struct{})
 	a.analyzerWarmupMu.Lock()
+	if a.analyzerWarmupDone != nil {
+		a.analyzerWarmupMu.Unlock()
+		cancel()
+		return
+	}
 	a.analyzerWarmupStop = cancel
 	a.analyzerWarmupDone = done
 	a.analyzerWarmupMu.Unlock()
-	defer func() {
-		cancel()
-		a.analyzerWarmupMu.Lock()
-		a.analyzerWarmupStop = nil
-		a.analyzerWarmupDone = nil
-		a.analyzerWarmupMu.Unlock()
-		close(done)
-	}()
 
+	go func() {
+		defer func() {
+			cancel()
+			a.analyzerWarmupMu.Lock()
+			if a.analyzerWarmupDone == done {
+				a.analyzerWarmupStop = nil
+				a.analyzerWarmupDone = nil
+			}
+			a.analyzerWarmupMu.Unlock()
+			close(done)
+		}()
+		_ = a.warmAnalyzer(ctx)
+	}()
+}
+
+func (a *App) warmAnalyzer(ctx context.Context) error {
 	exePath, err := a.ensureAnalyzerInstalled()
 	if err != nil {
 		return err
@@ -536,6 +554,15 @@ func (a *App) warmAnalyzer() error {
 		return nil
 	}
 	return analyzerbin.Warm(ctx, exePath)
+}
+
+func (a *App) waitForAnalyzerWarmup() {
+	a.analyzerWarmupMu.Lock()
+	done := a.analyzerWarmupDone
+	a.analyzerWarmupMu.Unlock()
+	if done != nil {
+		<-done
+	}
 }
 
 func (a *App) cancelAnalyzerWarmup() {
