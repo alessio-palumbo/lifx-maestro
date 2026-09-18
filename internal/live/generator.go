@@ -2,6 +2,7 @@ package live
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"lifx-maestro/internal/devices"
@@ -20,6 +21,7 @@ type GeneratorConfig struct {
 }
 
 type Generator struct {
+	styleMu     sync.RWMutex
 	style       styles.Style
 	intensity   generation.DynamicsOverride
 	devices     []devices.DeviceInfo
@@ -63,6 +65,7 @@ func (g *Generator) Generate(state State) []timeline.Event {
 }
 
 func (g *Generator) GenerateDecision(state State) GenerationDecision {
+	style := g.currentStyle()
 	motion := g.advanceMotion(state)
 	if !state.Active || len(g.devices) == 0 {
 		return GenerationDecision{}
@@ -87,17 +90,17 @@ func (g *Generator) GenerateDecision(state State) GenerationDecision {
 	}
 
 	kind := g.ambientIntent(state)
-	color := bandColor(g.style.Palette, state)
+	color := bandColor(style.Palette, state)
 	duration := ambientHop * 2
-	brightnessScale := g.style.BrightnessScale * g.autoBrightnessScale(state)
+	brightnessScale := style.BrightnessScale * g.autoBrightnessScale(state)
 	brightness := clamp((0.12+state.Energy*0.68)*brightnessScale, 0.01, 1)
 	effectIndex := g.beatIndex
 	if accent {
 		g.lastAccent = state.At
 		kind = g.accentIntent(state)
-		color = g.style.Palette.AccentForBeat(effectIndex)
+		color = style.Palette.AccentForBeat(effectIndex)
 		brightness = clamp((0.28+state.Energy*0.82)*brightnessScale, 0.01, 1)
-		duration = liveAccentDuration(state.TempoBPM, g.style.TransitionAggressiveness)
+		duration = liveAccentDuration(state.TempoBPM, style.TransitionAggressiveness)
 		g.beatIndex++
 	}
 
@@ -114,7 +117,7 @@ func (g *Generator) GenerateDecision(state State) GenerationDecision {
 			TimeMS:      state.At.Milliseconds(),
 			Target:      device.ID,
 			Color:       color,
-			Palette:     g.style.Palette,
+			Palette:     style.Palette,
 			Brightness:  brightness,
 			DurationMS:  duration.Milliseconds(),
 			BeatIndex:   spatialIndex + index,
@@ -130,6 +133,26 @@ func (g *Generator) GenerateDecision(state State) GenerationDecision {
 		}, device)...)
 	}
 	return GenerationDecision{Intent: kind, Accent: accent, Events: events}
+}
+
+// SetStyle changes future events without resetting the generator's timing,
+// motion, or phrase state.
+func (g *Generator) SetStyle(name string) error {
+	style, err := styles.Get(name)
+	if err != nil {
+		return err
+	}
+	style = liveStyle(style, g.intensity)
+	g.styleMu.Lock()
+	g.style = style
+	g.styleMu.Unlock()
+	return nil
+}
+
+func (g *Generator) currentStyle() styles.Style {
+	g.styleMu.RLock()
+	defer g.styleMu.RUnlock()
+	return g.style
 }
 
 func (g *Generator) ambientIntent(state State) rendering.IntentKind {

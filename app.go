@@ -363,6 +363,16 @@ func (a *App) StopLive() {
 	}
 }
 
+func (a *App) SetLiveStyle(style string) error {
+	a.liveMu.Lock()
+	session := a.liveSession
+	a.liveMu.Unlock()
+	if session == nil {
+		return fmt.Errorf("Maestro Live is not running")
+	}
+	return session.SetStyle(style)
+}
+
 type wailsLiveObserver struct {
 	app       *App
 	source    *livemode.MicrophoneSource

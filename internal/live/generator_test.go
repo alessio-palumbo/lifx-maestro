@@ -232,3 +232,50 @@ func TestGeneratorKeepsEffectsStableUntilSectionChange(t *testing.T) {
 		t.Fatalf("next phrase ambient intent = %q", got)
 	}
 }
+
+func TestGeneratorChangesStyleWithoutResettingProgress(t *testing.T) {
+	generator, err := NewGenerator(GeneratorConfig{
+		Style: "synthwave",
+		Devices: []devices.DeviceInfo{{
+			ID: "lamp", Capabilities: devices.DeviceCapabilities{Kind: devices.DeviceKindSingleZone},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := generator.Generate(State{
+		At: time.Second, Active: true, Energy: 0.7, Mid: 0.6, Onset: true, TempoBPM: 100,
+	})
+	beatIndex := generator.beatIndex
+	motion := generator.motion
+
+	if err := generator.SetStyle("warm"); err != nil {
+		t.Fatal(err)
+	}
+	if generator.beatIndex != beatIndex || generator.motion != motion {
+		t.Fatal("changing style reset generator progress")
+	}
+	after := generator.Generate(State{
+		At: 2 * time.Second, Active: true, Energy: 0.7, Mid: 0.6, Onset: true, TempoBPM: 100,
+	})
+	if len(before) != 1 || len(after) != 1 {
+		t.Fatalf("events before=%d after=%d, want one each", len(before), len(after))
+	}
+	if bytes.Equal(before[0].Params, after[0].Params) {
+		t.Fatal("changing style did not change rendered output")
+	}
+}
+
+func TestGeneratorRejectsUnknownStyleWithoutChangingCurrentStyle(t *testing.T) {
+	generator, err := NewGenerator(GeneratorConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := generator.currentStyle()
+	if err := generator.SetStyle("unknown"); err == nil {
+		t.Fatal("unknown style was accepted")
+	}
+	if after := generator.currentStyle(); after.Name != before.Name {
+		t.Fatalf("style changed from %q to %q after rejected update", before.Name, after.Name)
+	}
+}

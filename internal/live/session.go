@@ -28,6 +28,7 @@ type SessionConfig struct {
 type Session struct {
 	engine     *Engine
 	analyzer   Analyzer
+	generator  *Generator
 	player     *playback.Player
 	dispatcher *Dispatcher
 	controller devices.DeviceController
@@ -52,7 +53,7 @@ func NewSession(config SessionConfig) (*Session, error) {
 		return nil, err
 	}
 	return &Session{
-		engine: engine, analyzer: config.Analyzer, player: player, dispatcher: dispatcher, controller: config.Controller,
+		engine: engine, analyzer: config.Analyzer, generator: config.Generator, player: player, dispatcher: dispatcher, controller: config.Controller,
 		devices: append([]devices.DeviceInfo(nil), config.Devices...),
 	}, nil
 }
@@ -73,6 +74,10 @@ func (s *Session) Run(ctx context.Context) error {
 
 func (s *Session) SetMasterBrightness(scale float64) {
 	s.player.SetMasterBrightness(scale)
+}
+
+func (s *Session) SetStyle(style string) error {
+	return s.generator.SetStyle(style)
 }
 
 // SetObserver configures diagnostics before Run starts.

@@ -62,6 +62,10 @@ export function SaveTimeline(arg1) {
   return window['go']['main']['App']['SaveTimeline'](arg1);
 }
 
+export function SetLiveStyle(arg1) {
+  return window['go']['main']['App']['SetLiveStyle'](arg1);
+}
+
 export function SetMasterBrightness(arg1) {
   return window['go']['main']['App']['SetMasterBrightness'](arg1);
 }

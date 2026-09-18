@@ -1,6 +1,6 @@
 import './style.css';
 
-import { Analyze, AnalyzerPreparing, AudioDuration, ChooseAudioFile, ChooseTimelineSavePath, DiscoverDevices, DynamicsOptions, GenerateFromAnalysis, GenerationModes, LiveInputs, MasterBrightness, PausePreview, ResumePreview, SaveTimeline, SetMasterBrightness, StartAudioPreview, StartLive, StartPreview, StopLive, StopPreview, Styles } from '../wailsjs/go/main/App';
+import { Analyze, AnalyzerPreparing, AudioDuration, ChooseAudioFile, ChooseTimelineSavePath, DiscoverDevices, DynamicsOptions, GenerateFromAnalysis, GenerationModes, LiveInputs, MasterBrightness, PausePreview, ResumePreview, SaveTimeline, SetLiveStyle, SetMasterBrightness, StartAudioPreview, StartLive, StartPreview, StopLive, StopPreview, Styles } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 
 // The walkthrough only appears while the bundled analyzer is preparing itself,
@@ -463,9 +463,9 @@ function renderToolbar() {
         </label>
       </div>
       <div class="actions">
-        <label class="field">
+        <label class="field" ${live ? 'title="Style changes apply to the next Live lighting event."' : ''}>
           <span>Style</span>
-          <select id="style" class="select-control" ${state.liveRunning || state.liveStarting ? 'disabled' : ''}>${styleOptions}</select>
+          <select id="style" class="select-control" ${live && state.liveStarting ? 'disabled' : ''}>${styleOptions}</select>
         </label>
         ${live ? '' : `
           <label class="field">
@@ -1258,10 +1258,23 @@ function bindEvents() {
   document.querySelector('#regenerate')?.addEventListener('click', regenerate);
   document.querySelector('#save')?.addEventListener('click', saveTimeline);
   document.querySelector('#discover-devices')?.addEventListener('click', discoverDevices);
-  document.querySelector('#style')?.addEventListener('change', () => {
+  document.querySelector('#style')?.addEventListener('change', async () => {
     const selectedStyle = inputValue('style', state.workspaceMode === 'live' ? state.liveStyle : state.session?.style ?? state.styles[0] ?? 'synthwave');
     if (state.workspaceMode === 'live') {
-      state.liveStyle = selectedStyle;
+      const previousStyle = state.liveStyle;
+      if (!state.liveRunning) {
+        state.liveStyle = selectedStyle;
+        return;
+      }
+      try {
+        await SetLiveStyle(selectedStyle);
+        state.liveStyle = selectedStyle;
+        state.status = `Live style changed to ${selectedStyle}`;
+      } catch (error) {
+        state.liveStyle = previousStyle;
+        reportFailure(`Could not change Live style: ${readableError(error)}`);
+        render();
+      }
       return;
     }
     if (state.session) {
