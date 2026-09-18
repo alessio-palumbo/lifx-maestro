@@ -1,6 +1,6 @@
 import './style.css';
 
-import { Analyze, AnalyzerPreparing, AudioDuration, ChooseAudioFile, ChooseTimelineSavePath, DiscoverDevices, DynamicsOptions, GenerateFromAnalysis, GenerationModes, LiveInputs, MasterBrightness, PausePreview, ResumePreview, SaveTimeline, SetLiveStyle, SetMasterBrightness, StartAudioPreview, StartLive, StartPreview, StopLive, StopPreview, Styles } from '../wailsjs/go/main/App';
+import { Analyze, AnalyzerPreparing, AudioDuration, ChooseAudioFile, ChooseTimelineSavePath, DiscoverDevices, DynamicsOptions, GenerateFromAnalysis, GenerationModes, LiveInputs, MasterBrightness, PausePreview, ResumePreview, SaveTimeline, SetLiveDynamics, SetLiveStyle, SetMasterBrightness, StartAudioPreview, StartLive, StartPreview, StopLive, StopPreview, Styles } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 
 // The walkthrough only appears while the bundled analyzer is preparing itself,
@@ -331,6 +331,8 @@ EventsOn('live:state', (update: LiveAnalysisState) => {
 EventsOn('live:stopped', (result: { error?: string }) => {
   state.liveRunning = false;
   state.liveStarting = false;
+  state.liveState = null;
+  state.liveHistory = [];
   if (result?.error) {
     reportFailure(`Live stopped: ${result.error}`);
   } else {
@@ -450,7 +452,7 @@ function renderToolbar() {
       </div>
       <div class="transport">
         ${live ? `
-          <button id="live-start" class="tool icon-action transport-button ${state.liveStarting && !state.liveRunning ? 'pending' : ''}" title="Start Live" aria-label="Start Live" ${state.liveRunning || state.liveStarting ? 'disabled' : ''}>${state.liveStarting && !state.liveRunning ? '<span class="button-spinner" aria-hidden="true"></span>' : iconSVG('microphone')}</button>
+          <button id="live-start" class="tool icon-action transport-button ${state.liveStarting && !state.liveRunning ? 'pending' : ''} ${state.liveRunning ? 'recording' : ''}" title="${state.liveRunning ? 'Microphone active' : 'Start Live'}" aria-label="${state.liveRunning ? 'Microphone active' : 'Start Live'}" aria-pressed="${state.liveRunning}" ${state.liveRunning || state.liveStarting ? 'disabled' : ''}>${state.liveStarting && !state.liveRunning ? '<span class="button-spinner" aria-hidden="true"></span>' : iconSVG('microphone')}</button>
           <button id="live-stop" class="tool icon-action transport-button ${state.liveStarting && state.liveRunning ? 'pending' : ''}" title="Stop Live" aria-label="Stop Live" ${!state.liveRunning || state.liveStarting ? 'disabled' : ''}>${state.liveStarting && state.liveRunning ? '<span class="button-spinner" aria-hidden="true"></span>' : iconSVG('stop')}</button>
           <div class="timecode live-timecode">${formatTime(state.liveState?.elapsed_ms ?? 0)} <span>${state.liveRunning ? 'listening' : 'ready'}</span></div>
         ` : `
@@ -505,13 +507,14 @@ function transportIcon() {
   return iconSVG(state.playing ? 'pause' : 'play');
 }
 
-function iconSVG(name: 'play' | 'pause' | 'stop' | 'sun' | 'microphone') {
+function iconSVG(name: 'play' | 'pause' | 'stop' | 'sun' | 'microphone' | 'settings') {
   const content = {
     play: '<polygon points="6 3 20 12 6 21 6 3"></polygon>',
     pause: '<rect x="6" y="4" width="4" height="16" rx="1"></rect><rect x="14" y="4" width="4" height="16" rx="1"></rect>',
     stop: '<rect x="4" y="4" width="16" height="16" rx="2"></rect>',
     sun: '<circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"></path>',
     microphone: '<rect x="9" y="3" width="6" height="12" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6"></path>',
+    settings: '<circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.09A1.7 1.7 0 0 0 8.94 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.57 15 1.7 1.7 0 0 0 3 14H3v-4h.09A1.7 1.7 0 0 0 4.6 8.94a1.7 1.7 0 0 0-.34-1.88L4.2 7l2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.57 1.7 1.7 0 0 0 10 3.09V3h4v.09A1.7 1.7 0 0 0 15.06 4.6a1.7 1.7 0 0 0 1.88-.34L17 4.2 19.83 7l-.06.06a1.7 1.7 0 0 0-.34 1.88A1.7 1.7 0 0 0 20.91 10H21v4h-.09A1.7 1.7 0 0 0 19.4 15z"></path>',
   }[name];
   return `<svg class="toolbar-icon" viewBox="0 0 24 24" aria-hidden="true">${content}</svg>`;
 }
@@ -529,20 +532,27 @@ function renderLiveWorkspace() {
   const intensityOptions = state.dynamicsOptions
     .map((value) => `<option value="${escapeAttr(value)}" ${state.liveIntensity === value ? 'selected' : ''}>${escapeHTML(value === 'auto' ? 'Auto' : capitalize(value))}</option>`)
     .join('');
-  const disabled = state.liveRunning || state.liveStarting ? 'disabled' : '';
+  const captureDisabled = state.liveRunning || state.liveStarting ? 'disabled' : '';
+  const dynamicsDisabled = state.liveStarting ? 'disabled' : '';
+  const captureHint = captureDisabled ? 'title="Stop Live to change this setting"' : '';
   return `
     <main class="live-panel">
       <section class="live-config">
         <div class="live-heading">
-          <div class="panel-title live-config-title">Microphone settings</div>
-          <span id="live-status" class="live-status ${live?.active ? 'active' : ''}">${liveStatusLabel()}</span>
-        </div>
-        <div class="live-controls">
-          <label class="field live-field"><span>Input</span><select id="live-input" ${disabled}>${inputOptions}</select></label>
-          <label class="field live-field"><span>Sensitivity</span><select id="live-sensitivity" ${disabled}>
-            ${['low', 'normal', 'high'].map((value) => `<option value="${value}" ${state.liveSensitivity === value ? 'selected' : ''}>${capitalize(value)}</option>`).join('')}
-          </select></label>
-          <label class="field live-field"><span>Dynamics</span><select id="live-intensity" ${disabled}>${intensityOptions}</select></label>
+          <div class="live-heading-status">
+            <div class="panel-title live-config-title">Microphone</div>
+            <span id="live-status" class="live-status ${live?.active ? 'active' : ''}">${liveStatusLabel()}</span>
+            <details class="live-settings">
+              <summary class="panel-toggle" title="Microphone settings" aria-label="Microphone settings">${iconSVG('settings')}</summary>
+              <div class="live-settings-menu">
+                <label class="field live-field" ${captureHint}><span>Input</span><select id="live-input" ${captureDisabled}>${inputOptions}</select></label>
+                <label class="field live-field" ${captureHint}><span>Sensitivity</span><select id="live-sensitivity" ${captureDisabled}>
+                  ${['low', 'normal', 'high'].map((value) => `<option value="${value}" ${state.liveSensitivity === value ? 'selected' : ''}>${capitalize(value)}</option>`).join('')}
+                </select></label>
+              </div>
+            </details>
+          </div>
+          <label class="field live-field live-dynamics-control"><span>Dynamics</span><select id="live-intensity" ${dynamicsDisabled}>${intensityOptions}</select></label>
         </div>
       </section>
       <section id="live-signal" class="live-signal">
@@ -1305,8 +1315,22 @@ function bindEvents() {
   document.querySelector('#live-sensitivity')?.addEventListener('change', () => {
     state.liveSensitivity = inputValue('live-sensitivity', 'low');
   });
-  document.querySelector('#live-intensity')?.addEventListener('change', () => {
-    state.liveIntensity = inputValue('live-intensity', 'auto');
+  document.querySelector('#live-intensity')?.addEventListener('change', async () => {
+    const selectedDynamics = inputValue('live-intensity', 'auto');
+    const previousDynamics = state.liveIntensity;
+    if (!state.liveRunning) {
+      state.liveIntensity = selectedDynamics;
+      return;
+    }
+    try {
+      await SetLiveDynamics(selectedDynamics);
+      state.liveIntensity = selectedDynamics;
+      state.status = `Live dynamics changed to ${selectedDynamics}`;
+    } catch (error) {
+      state.liveIntensity = previousDynamics;
+      reportFailure(`Could not change Live dynamics: ${readableError(error)}`);
+      render();
+    }
   });
   document.querySelector('#choose-song')?.addEventListener('click', chooseSong);
   document.querySelector('#regenerate')?.addEventListener('click', regenerate);
@@ -1431,6 +1455,13 @@ function bindEvents() {
     });
   });
   const layerPickers = Array.from(document.querySelectorAll<HTMLDetailsElement>('.layer-picker'));
+  const liveSettings = document.querySelector<HTMLDetailsElement>('.live-settings');
+  liveSettings?.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      liveSettings.open = false;
+      liveSettings.querySelector<HTMLElement>('summary')?.focus();
+    }
+  });
   layerPickers.forEach((picker) => {
     picker.addEventListener('toggle', () => {
       if (!picker.open) {
@@ -1444,12 +1475,15 @@ function bindEvents() {
     });
   });
   document.querySelector<HTMLElement>('.shell')?.addEventListener('pointerdown', (event) => {
-    if ((event.target as HTMLElement).closest('.layer-picker')) {
-      return;
+    const target = event.target as HTMLElement;
+    if (!target.closest('.layer-picker')) {
+      layerPickers.forEach((picker) => {
+        picker.open = false;
+      });
     }
-    layerPickers.forEach((picker) => {
-      picker.open = false;
-    });
+    if (liveSettings && !target.closest('.live-settings')) {
+      liveSettings.open = false;
+    }
   });
 
   const timeline = document.querySelector<HTMLElement>('.timeline');

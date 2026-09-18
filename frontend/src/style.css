@@ -237,6 +237,19 @@ button {
   opacity: 0.45;
 }
 
+.tool:disabled:not(.recording):hover {
+  border-color: #384150;
+  background: #222832;
+}
+
+.transport-button.recording,
+.transport-button.recording:hover {
+  border-color: #c45c6c;
+  color: #ffe3e7;
+  background: #5a222c;
+  opacity: 1;
+}
+
 .transport-button {
   display: inline-grid;
   place-items: center;
@@ -711,10 +724,9 @@ button {
 }
 
 .live-config {
-  display: grid;
-  gap: 16px;
-  min-height: 124px;
-  padding: 20px 24px;
+  position: relative;
+  min-height: 62px;
+  padding: 14px 24px;
   border-bottom: 1px solid #2a3039;
   background: #14181e;
 }
@@ -726,6 +738,13 @@ button {
   justify-content: space-between;
   min-width: 260px;
   gap: 18px;
+}
+
+.live-heading-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
 }
 
 .live-config-title {
@@ -748,11 +767,46 @@ button {
   background: #17382c;
 }
 
-.live-controls {
+.live-settings {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.live-settings > summary {
   display: grid;
-  grid-template-columns: minmax(240px, 1.4fr) minmax(190px, 1fr) minmax(190px, 1fr);
+  place-items: center;
+  list-style: none;
+  cursor: pointer;
+}
+
+.live-settings > summary .toolbar-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.live-settings > summary::-webkit-details-marker {
+  display: none;
+}
+
+.live-settings[open] > summary {
+  border-color: #4b5869;
+  background: #252c35;
+}
+
+.live-settings-menu {
+  position: absolute;
+  top: calc(100% + 9px);
+  left: 0;
+  z-index: 12;
+  display: grid;
+  grid-template-columns: minmax(230px, 1.4fr) minmax(180px, 1fr);
   gap: 12px;
-  min-width: 0;
+  width: min(500px, calc(100vw - 84px));
+  padding: 14px;
+  border: 1px solid #384150;
+  border-radius: 7px;
+  background: #181d23;
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.42);
 }
 
 .live-field {
@@ -769,7 +823,18 @@ button {
   border: 1px solid #303743;
   border-radius: 7px;
   color: #edf1f7;
-  background: #15191f;
+}
+
+.live-dynamics-control {
+  flex: 0 0 auto;
+  grid-template-columns: auto 100px;
+}
+
+.live-field select:disabled {
+  border-color: #292f38;
+  color: #697483;
+  background: #12161b;
+  cursor: not-allowed;
 }
 
 .live-signal {

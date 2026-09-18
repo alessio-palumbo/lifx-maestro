@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"lifx-maestro/internal/devices"
+	"lifx-maestro/internal/generation"
 	"lifx-maestro/internal/playback"
 )
 
@@ -78,6 +79,10 @@ func (s *Session) SetMasterBrightness(scale float64) {
 
 func (s *Session) SetStyle(style string) error {
 	return s.generator.SetStyle(style)
+}
+
+func (s *Session) SetIntensity(intensity generation.DynamicsOverride) error {
+	return s.generator.SetIntensity(intensity)
 }
 
 // SetObserver configures diagnostics before Run starts.

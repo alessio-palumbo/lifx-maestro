@@ -34,6 +34,8 @@ export function ResumePreview():Promise<void>;
 
 export function SaveTimeline(arg1:main.SaveTimelineRequest):Promise<void>;
 
+export function SetLiveDynamics(arg1:string):Promise<void>;
+
 export function SetLiveStyle(arg1:string):Promise<void>;
 
 export function SetMasterBrightness(arg1:number):Promise<void>;

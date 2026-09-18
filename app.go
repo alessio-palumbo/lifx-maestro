@@ -373,6 +373,16 @@ func (a *App) SetLiveStyle(style string) error {
 	return session.SetStyle(style)
 }
 
+func (a *App) SetLiveDynamics(dynamics string) error {
+	a.liveMu.Lock()
+	session := a.liveSession
+	a.liveMu.Unlock()
+	if session == nil {
+		return fmt.Errorf("Maestro Live is not running")
+	}
+	return session.SetIntensity(generation.DynamicsOverride(dynamics))
+}
+
 type wailsLiveObserver struct {
 	app       *App
 	source    *livemode.MicrophoneSource

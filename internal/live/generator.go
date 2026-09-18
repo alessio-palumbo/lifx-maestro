@@ -21,7 +21,8 @@ type GeneratorConfig struct {
 }
 
 type Generator struct {
-	styleMu     sync.RWMutex
+	settingsMu  sync.RWMutex
+	styleName   string
 	style       styles.Style
 	intensity   generation.DynamicsOverride
 	devices     []devices.DeviceInfo
@@ -53,6 +54,7 @@ func NewGenerator(config GeneratorConfig) (*Generator, error) {
 	}
 	style = liveStyle(style, config.Intensity)
 	return &Generator{
+		styleName:  config.Style,
 		style:      style,
 		intensity:  config.Intensity,
 		devices:    config.Devices,
@@ -65,7 +67,9 @@ func (g *Generator) Generate(state State) []timeline.Event {
 }
 
 func (g *Generator) GenerateDecision(state State) GenerationDecision {
-	style := g.currentStyle()
+	g.settingsMu.RLock()
+	defer g.settingsMu.RUnlock()
+	style := g.style
 	motion := g.advanceMotion(state)
 	if !state.Active || len(g.devices) == 0 {
 		return GenerationDecision{}
@@ -142,16 +146,33 @@ func (g *Generator) SetStyle(name string) error {
 	if err != nil {
 		return err
 	}
+	g.settingsMu.Lock()
 	style = liveStyle(style, g.intensity)
-	g.styleMu.Lock()
+	g.styleName = name
 	g.style = style
-	g.styleMu.Unlock()
+	g.settingsMu.Unlock()
 	return nil
 }
 
+// SetIntensity changes future event pacing and style scaling without resetting
+// the generator's beat, motion, or phrase progress.
+func (g *Generator) SetIntensity(intensity generation.DynamicsOverride) error {
+	if err := generation.ValidateDynamics(intensity); err != nil {
+		return err
+	}
+	g.settingsMu.Lock()
+	style, err := styles.Get(g.styleName)
+	if err == nil {
+		g.intensity = intensity
+		g.style = liveStyle(style, intensity)
+	}
+	g.settingsMu.Unlock()
+	return err
+}
+
 func (g *Generator) currentStyle() styles.Style {
-	g.styleMu.RLock()
-	defer g.styleMu.RUnlock()
+	g.settingsMu.RLock()
+	defer g.settingsMu.RUnlock()
 	return g.style
 }
 

@@ -279,3 +279,38 @@ func TestGeneratorRejectsUnknownStyleWithoutChangingCurrentStyle(t *testing.T) {
 		t.Fatalf("style changed from %q to %q after rejected update", before.Name, after.Name)
 	}
 }
+
+func TestGeneratorChangesIntensityWithoutResettingProgress(t *testing.T) {
+	generator, err := NewGenerator(GeneratorConfig{Style: "synthwave", Intensity: generation.DynamicsCalm})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := generator.currentStyle()
+	generator.beatIndex = 4
+	generator.motion = 2.5
+
+	if err := generator.SetIntensity(generation.DynamicsEnergetic); err != nil {
+		t.Fatal(err)
+	}
+	if generator.beatIndex != 4 || generator.motion != 2.5 {
+		t.Fatal("changing intensity reset generator progress")
+	}
+	after := generator.currentStyle()
+	if after.BrightnessScale <= before.BrightnessScale {
+		t.Fatalf("brightness scale = %.2f after energetic, want greater than calm %.2f", after.BrightnessScale, before.BrightnessScale)
+	}
+}
+
+func TestGeneratorRejectsInvalidIntensityWithoutChangingCurrentStyle(t *testing.T) {
+	generator, err := NewGenerator(GeneratorConfig{Style: "synthwave", Intensity: generation.DynamicsCalm})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := generator.currentStyle()
+	if err := generator.SetIntensity("extreme"); err == nil {
+		t.Fatal("invalid intensity was accepted")
+	}
+	if after := generator.currentStyle(); after.BrightnessScale != before.BrightnessScale {
+		t.Fatalf("brightness scale changed from %.2f to %.2f after rejected update", before.BrightnessScale, after.BrightnessScale)
+	}
+}
