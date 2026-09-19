@@ -25,6 +25,10 @@ type Features struct {
 	RMSDB           float64
 	RecentRMSDB     float64
 	HasRecentRMS    bool
+	RecentLowDB     float64
+	RecentMidDB     float64
+	RecentHighDB    float64
+	HasRecentBands  bool
 	LowDB           float64
 	MidDB           float64
 	HighDB          float64

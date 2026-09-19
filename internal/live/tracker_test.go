@@ -207,13 +207,17 @@ func TestStateTrackerKeepsSpectrallySupportedQuietMusicActive(t *testing.T) {
 	var state State
 	for i := 80; i < 140; i++ {
 		state = tracker.Update(Features{
-			At:           time.Duration(i) * 50 * time.Millisecond,
-			RMSDB:        -72,
-			RecentRMSDB:  -20,
-			HasRecentRMS: true,
-			LowDB:        -71,
-			MidDB:        -54,
-			HighDB:       -52,
+			At:             time.Duration(i) * 50 * time.Millisecond,
+			RMSDB:          -72,
+			RecentRMSDB:    -72,
+			HasRecentRMS:   true,
+			RecentLowDB:    -71,
+			RecentMidDB:    -54,
+			RecentHighDB:   -52,
+			HasRecentBands: true,
+			LowDB:          -71,
+			MidDB:          -54,
+			HighDB:         -52,
 		})
 	}
 
@@ -248,20 +252,24 @@ func TestStateTrackerDoesNotOpenForOneSteadyBand(t *testing.T) {
 	}
 }
 
-func TestStateTrackerBridgesBriefQuietPassageAndRecovers(t *testing.T) {
+func TestStateTrackerRetainsStateThroughBriefQuietPassageAndRecovers(t *testing.T) {
 	tracker := NewStateTracker(DefaultTrackerConfig())
 	for i := 0; i < 80; i++ {
 		tracker.Update(Features{At: time.Duration(i) * 50 * time.Millisecond, RMSDB: -72, LowDB: -72, MidDB: -72, HighDB: -72})
 	}
 	music := func(at time.Duration) State {
 		return tracker.Update(Features{
-			At:           at,
-			RMSDB:        -72,
-			RecentRMSDB:  -20,
-			HasRecentRMS: true,
-			LowDB:        -70,
-			MidDB:        -53,
-			HighDB:       -51,
+			At:             at,
+			RMSDB:          -72,
+			RecentRMSDB:    -72,
+			HasRecentRMS:   true,
+			RecentLowDB:    -70,
+			RecentMidDB:    -53,
+			RecentHighDB:   -51,
+			HasRecentBands: true,
+			LowDB:          -70,
+			MidDB:          -53,
+			HighDB:         -51,
 		})
 	}
 	var state State
@@ -273,17 +281,21 @@ func TestStateTrackerBridgesBriefQuietPassageAndRecovers(t *testing.T) {
 	}
 	for i := 100; i < 112; i++ {
 		state = tracker.Update(Features{
-			At:           time.Duration(i) * 50 * time.Millisecond,
-			RMSDB:        -80,
-			RecentRMSDB:  -20,
-			HasRecentRMS: true,
-			LowDB:        -80,
-			MidDB:        -80,
-			HighDB:       -80,
+			At:             time.Duration(i) * 50 * time.Millisecond,
+			RMSDB:          -80,
+			RecentRMSDB:    -80,
+			HasRecentRMS:   true,
+			RecentLowDB:    -80,
+			RecentMidDB:    -80,
+			RecentHighDB:   -80,
+			HasRecentBands: true,
+			LowDB:          -80,
+			MidDB:          -80,
+			HighDB:         -80,
 		})
 	}
-	if !state.Active || !state.Sustained {
-		t.Fatalf("brief quiet passage stopped motion: %+v", state)
+	if !state.Active || state.Sustained {
+		t.Fatalf("brief quiet passage did not retain presence while suppressing output: %+v", state)
 	}
 	state = music(112 * 50 * time.Millisecond)
 	if !state.Active || !state.Sustained {

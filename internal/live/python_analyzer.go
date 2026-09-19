@@ -123,6 +123,9 @@ type liveFeatureResponse struct {
 	AtMS            int64    `json:"at_ms"`
 	RMSDB           float64  `json:"rms_db"`
 	RecentRMSDB     *float64 `json:"recent_rms_db"`
+	RecentLowDB     *float64 `json:"recent_low_db"`
+	RecentMidDB     *float64 `json:"recent_mid_db"`
+	RecentHighDB    *float64 `json:"recent_high_db"`
 	LowDB           float64  `json:"low_db"`
 	MidDB           float64  `json:"mid_db"`
 	HighDB          float64  `json:"high_db"`
@@ -154,6 +157,12 @@ func (r liveFeatureResponse) features() Features {
 	if r.RecentRMSDB != nil {
 		features.RecentRMSDB = *r.RecentRMSDB
 		features.HasRecentRMS = true
+	}
+	if r.RecentLowDB != nil && r.RecentMidDB != nil && r.RecentHighDB != nil {
+		features.RecentLowDB = *r.RecentLowDB
+		features.RecentMidDB = *r.RecentMidDB
+		features.RecentHighDB = *r.RecentHighDB
+		features.HasRecentBands = true
 	}
 	for _, candidate := range r.TempoCandidates {
 		features.TempoCandidates = append(features.TempoCandidates, TempoCandidate{

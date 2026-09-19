@@ -105,7 +105,12 @@ class LiveWindowAnalyzer:
         window_gain = float(np.sqrt(np.mean(np.square(window))))
         rms = float(np.sqrt(np.mean(np.square(samples, dtype=np.float64))))
         recent_size = min(len(samples), max(1, int(round(sample_rate * LIVE_DEFAULT_HOP_SECONDS))))
-        recent_rms = float(np.sqrt(np.mean(np.square(samples[-recent_size:], dtype=np.float64))))
+        recent_samples = samples[-recent_size:]
+        recent_window = np.hanning(recent_size)
+        recent_magnitude = np.abs(np.fft.rfft(recent_samples * recent_window))
+        recent_frequencies = np.fft.rfftfreq(recent_size, d=1.0 / sample_rate)
+        recent_window_gain = float(np.sqrt(np.mean(np.square(recent_window))))
+        recent_rms = float(np.sqrt(np.mean(np.square(recent_samples, dtype=np.float64))))
 
         flux, accepted_transient = self.analyze_onset(samples, sample_rate, at_seconds)
 
@@ -117,6 +122,9 @@ class LiveWindowAnalyzer:
             "at_ms": int(round(at_seconds * 1000)),
             "rms_db": amplitude_db(rms),
             "recent_rms_db": amplitude_db(recent_rms),
+            "recent_low_db": band_db(recent_magnitude, recent_frequencies, 20, 250, recent_window_gain),
+            "recent_mid_db": band_db(recent_magnitude, recent_frequencies, 250, 4000, recent_window_gain),
+            "recent_high_db": band_db(recent_magnitude, recent_frequencies, 4000, min(12000, sample_rate / 2), recent_window_gain),
             "low_db": band_db(magnitude, frequencies, 20, 250, window_gain),
             "mid_db": band_db(magnitude, frequencies, 250, 4000, window_gain),
             "high_db": band_db(magnitude, frequencies, 4000, min(12000, sample_rate / 2), window_gain),
@@ -250,6 +258,9 @@ class LiveWindowAnalyzer:
             "at_ms": int(round(at_seconds * 1000)),
             "rms_db": -120.0,
             "recent_rms_db": -120.0,
+            "recent_low_db": -120.0,
+            "recent_mid_db": -120.0,
+            "recent_high_db": -120.0,
             "low_db": -120.0,
             "mid_db": -120.0,
             "high_db": -120.0,

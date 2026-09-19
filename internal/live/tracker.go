@@ -219,6 +219,12 @@ func (t *StateTracker) Update(features Features) State {
 		recentRMSDB = features.RecentRMSDB
 	}
 	recentInput := gatedLevel(recentRMSDB, t.noiseFloorDB, t.config) > 0
+	if features.HasRecentBands {
+		recentLow := gatedLevel(features.RecentLowDB, t.bandFloorDB[0], t.config)
+		recentMid := gatedLevel(features.RecentMidDB, t.bandFloorDB[1], t.config)
+		recentHigh := gatedLevel(features.RecentHighDB, t.bandFloorDB[2], t.config)
+		recentInput = recentInput || secondStrongest(recentLow, recentMid, recentHigh) >= rawSpectralPresence
+	}
 	beat := t.updateBeatClock(features.At, reportedTempo, observedBeat, recentInput)
 	activity, intensity, dynamics, novelty, sectionChange := t.updateInterpretation(features.At, onset, sustained)
 	outputSustained := sustained && recentInput
