@@ -221,6 +221,8 @@ func (t *StateTracker) Update(features Features) State {
 	recentInput := gatedLevel(recentRMSDB, t.noiseFloorDB, t.config) > 0
 	beat := t.updateBeatClock(features.At, reportedTempo, observedBeat, recentInput)
 	activity, intensity, dynamics, novelty, sectionChange := t.updateInterpretation(features.At, onset, sustained)
+	outputSustained := sustained && recentInput
+	outputSectionChange := sectionChange && recentInput
 
 	trend := clamp(t.energy-t.lastEnergy, -1, 1)
 	t.lastEnergy = t.energy
@@ -241,12 +243,12 @@ func (t *StateTracker) Update(features Features) State {
 		TempoBPM:          reportedTempo,
 		TempoConfidence:   clamp(t.tempoConfidence, 0, 1),
 		Active:            active,
-		Sustained:         sustained,
+		Sustained:         outputSustained,
 		Activity:          activity,
 		Intensity:         intensity,
 		Dynamics:          dynamics,
 		Novelty:           novelty,
-		SectionChange:     sectionChange,
+		SectionChange:     outputSectionChange,
 	}
 }
 

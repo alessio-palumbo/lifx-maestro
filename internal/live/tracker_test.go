@@ -207,11 +207,13 @@ func TestStateTrackerKeepsSpectrallySupportedQuietMusicActive(t *testing.T) {
 	var state State
 	for i := 80; i < 140; i++ {
 		state = tracker.Update(Features{
-			At:     time.Duration(i) * 50 * time.Millisecond,
-			RMSDB:  -72,
-			LowDB:  -71,
-			MidDB:  -54,
-			HighDB: -52,
+			At:           time.Duration(i) * 50 * time.Millisecond,
+			RMSDB:        -72,
+			RecentRMSDB:  -20,
+			HasRecentRMS: true,
+			LowDB:        -71,
+			MidDB:        -54,
+			HighDB:       -52,
 		})
 	}
 
@@ -252,7 +254,15 @@ func TestStateTrackerBridgesBriefQuietPassageAndRecovers(t *testing.T) {
 		tracker.Update(Features{At: time.Duration(i) * 50 * time.Millisecond, RMSDB: -72, LowDB: -72, MidDB: -72, HighDB: -72})
 	}
 	music := func(at time.Duration) State {
-		return tracker.Update(Features{At: at, RMSDB: -72, LowDB: -70, MidDB: -53, HighDB: -51})
+		return tracker.Update(Features{
+			At:           at,
+			RMSDB:        -72,
+			RecentRMSDB:  -20,
+			HasRecentRMS: true,
+			LowDB:        -70,
+			MidDB:        -53,
+			HighDB:       -51,
+		})
 	}
 	var state State
 	for i := 80; i < 100; i++ {
@@ -262,7 +272,15 @@ func TestStateTrackerBridgesBriefQuietPassageAndRecovers(t *testing.T) {
 		t.Fatal("spectral input did not become sustained")
 	}
 	for i := 100; i < 112; i++ {
-		state = tracker.Update(Features{At: time.Duration(i) * 50 * time.Millisecond, RMSDB: -80, LowDB: -80, MidDB: -80, HighDB: -80})
+		state = tracker.Update(Features{
+			At:           time.Duration(i) * 50 * time.Millisecond,
+			RMSDB:        -80,
+			RecentRMSDB:  -20,
+			HasRecentRMS: true,
+			LowDB:        -80,
+			MidDB:        -80,
+			HighDB:       -80,
+		})
 	}
 	if !state.Active || !state.Sustained {
 		t.Fatalf("brief quiet passage stopped motion: %+v", state)
@@ -495,6 +513,39 @@ func TestStateTrackerSuppressesPredictedBeatWhenRecentInputStops(t *testing.T) {
 	}
 	if state.TempoBPM == 0 {
 		t.Fatal("silence discarded the learned tempo instead of only suspending its clock")
+	}
+}
+
+func TestStateTrackerSuppressesOutputSustainWhenRecentInputStops(t *testing.T) {
+	tracker := NewStateTracker(DefaultTrackerConfig())
+	for index := 0; index < 10; index++ {
+		tracker.Update(Features{
+			At:           time.Second + time.Duration(index)*100*time.Millisecond,
+			RMSDB:        -20,
+			RecentRMSDB:  -20,
+			HasRecentRMS: true,
+			LowDB:        -25,
+			MidDB:        -22,
+			HighDB:       -28,
+		})
+	}
+	state := tracker.Update(Features{
+		At:           2 * time.Second,
+		RMSDB:        -20,
+		RecentRMSDB:  -90,
+		HasRecentRMS: true,
+		LowDB:        -25,
+		MidDB:        -22,
+		HighDB:       -28,
+	})
+	if !state.Active {
+		t.Fatal("recent silence discarded smoothed presence")
+	}
+	if state.Sustained {
+		t.Fatal("recent silence remained eligible for ambient output")
+	}
+	if tracker.sustainedUntil <= state.At {
+		t.Fatal("recent silence discarded the tracker's internal sustained state")
 	}
 }
 
