@@ -17,9 +17,21 @@ type TourStep = {
 
 const TOUR_STEPS: TourStep[] = [
   {
+    anchors: ['.workspace-tabs'],
+    title: 'Timeline or Live',
+    body: 'Timeline builds an editable light show from a song file. Live reacts to nearby music, singing or instruments through your microphone.',
+    placement: 'below',
+  },
+  {
+    anchors: ['[data-workspace="live"]'],
+    title: 'Listen with Live',
+    body: 'Open Live and press the microphone button to start listening. Allow microphone access when prompted. Sensitivity in microphone settings controls how easily nearby sounds trigger the lights.',
+    placement: 'below',
+  },
+  {
     anchors: ['#choose-song'],
     title: 'Choose a song',
-    body: 'Pick an MP3 or WAV file to build a light show from.',
+    body: 'In Timeline, pick an MP3 or WAV file to build a light show from.',
     placement: 'below',
   },
   {
