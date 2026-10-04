@@ -3,7 +3,13 @@ package devices
 import (
 	"testing"
 	"time"
+
+	lifxdevice "github.com/alessio-palumbo/lifxlan-go/pkg/device"
 )
+
+func capturedSnapshot() lifxdevice.StateSnapshot {
+	return lifxdevice.StateSnapshot{Devices: []lifxdevice.DeviceStateSnapshot{{}}}
+}
 
 // Restarting a preview quickly used to recapture state while the lights were
 // still mid-restore, storing this app's own colours as the user's. These cover the
@@ -18,7 +24,7 @@ func TestHoldsUsableSnapshotWithNothingCaptured(t *testing.T) {
 
 func TestHoldsUsableSnapshotBeforeAnyRestore(t *testing.T) {
 	controller := &LifxDeviceController{
-		snapshots:      []stateSnapshot{{}},
+		snapshot:       capturedSnapshot(),
 		snapshotTarget: "all",
 	}
 
@@ -31,7 +37,7 @@ func TestHoldsUsableSnapshotBeforeAnyRestore(t *testing.T) {
 
 func TestHoldsUsableSnapshotWithinSettleWindow(t *testing.T) {
 	controller := &LifxDeviceController{
-		snapshots:      []stateSnapshot{{}},
+		snapshot:       capturedSnapshot(),
 		snapshotTarget: "all",
 		restoredAt:     time.Now(),
 	}
@@ -43,7 +49,7 @@ func TestHoldsUsableSnapshotWithinSettleWindow(t *testing.T) {
 
 func TestHoldsUsableSnapshotAfterSettleWindow(t *testing.T) {
 	controller := &LifxDeviceController{
-		snapshots:      []stateSnapshot{{}},
+		snapshot:       capturedSnapshot(),
 		snapshotTarget: "all",
 		restoredAt:     time.Now().Add(-stateSettleWindow - time.Second),
 	}
@@ -57,7 +63,7 @@ func TestHoldsUsableSnapshotAfterSettleWindow(t *testing.T) {
 
 func TestHoldsUsableSnapshotIgnoresADifferentTarget(t *testing.T) {
 	controller := &LifxDeviceController{
-		snapshots:      []stateSnapshot{{}},
+		snapshot:       capturedSnapshot(),
 		snapshotTarget: "desk",
 		restoredAt:     time.Now(),
 	}
@@ -71,7 +77,7 @@ func TestHoldsUsableSnapshotIgnoresADifferentTarget(t *testing.T) {
 // fade rather than starting after it.
 func TestRestoreStateStampsTheSettleWindow(t *testing.T) {
 	controller := &LifxDeviceController{
-		snapshots:      []stateSnapshot{{}},
+		snapshot:       capturedSnapshot(),
 		snapshotTarget: "all",
 	}
 
