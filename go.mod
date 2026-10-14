@@ -3,17 +3,17 @@ module lifx-maestro
 go 1.26
 
 require (
-	github.com/alessio-palumbo/lifxlan-go v0.12.0
+	github.com/alessio-palumbo/lifxlan-go v0.16.0
 	github.com/alessio-palumbo/lifxprotocol-go v0.4.0
 	github.com/gen2brain/malgo v0.11.26
 	github.com/gopxl/beep v1.4.1
-	github.com/urfave/cli/v3 v3.9.0
-	github.com/wailsapp/wails/v2 v2.12.0
+	github.com/urfave/cli/v3 v3.14.0
+	github.com/wailsapp/wails/v2 v2.16.0
 )
 
 require (
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
-	github.com/alessio-palumbo/lifxregistry-go v0.4.0 // indirect
+	github.com/alessio-palumbo/lifxregistry-go v0.5.1 // indirect
 	github.com/bep/debounce v1.2.1 // indirect
 	github.com/ebitengine/oto/v3 v3.1.0 // indirect
 	github.com/ebitengine/purego v0.7.1 // indirect
@@ -40,8 +40,8 @@ require (
 	github.com/valyala/fasttemplate v1.2.2 // indirect
 	github.com/wailsapp/go-webview2 v1.0.22 // indirect
 	github.com/wailsapp/mimetype v1.4.1 // indirect
-	golang.org/x/crypto v0.33.0 // indirect
-	golang.org/x/net v0.35.0 // indirect
-	golang.org/x/sys v0.30.0 // indirect
-	golang.org/x/text v0.22.0 // indirect
+	golang.org/x/crypto v0.53.0 // indirect
+	golang.org/x/net v0.56.0 // indirect
+	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/text v0.39.0 // indirect
 )
