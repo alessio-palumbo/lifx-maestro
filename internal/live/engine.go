@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"lifx-maestro/internal/timeline"
+	"github.com/alessio-palumbo/lifx-maestro/internal/timeline"
 )
 
 const (
@@ -21,7 +21,11 @@ type EngineConfig struct {
 	Tracker   *StateTracker
 	Generator *Generator
 	Sink      EventSink
+	FrameSink FrameSink
 	Observer  Observer
+	// BorrowAnalyzer leaves Close to the caller. Session uses this so it closes
+	// once even when capture or power-on fails before Engine.Run.
+	BorrowAnalyzer bool
 
 	WindowDuration time.Duration
 	HopDuration    time.Duration
@@ -41,7 +45,7 @@ func NewEngine(config EngineConfig) (*Engine, error) {
 	if config.Generator == nil {
 		return nil, fmt.Errorf("live generator is required")
 	}
-	if config.Sink == nil {
+	if config.Sink == nil && config.FrameSink == nil {
 		return nil, fmt.Errorf("live event sink is required")
 	}
 	if config.Tracker == nil {
@@ -60,12 +64,21 @@ func NewEngine(config EngineConfig) (*Engine, error) {
 }
 
 func (e *Engine) Run(ctx context.Context) error {
+	if e.config.FrameSink != nil {
+		return runEngine(e, ctx, func(state State) []TargetFrame { return e.config.Generator.GenerateDecision(state).Frames }, e.config.FrameSink.Run)
+	}
+	return runEngine(e, ctx, e.config.Generator.Generate, e.config.Sink.Run)
+}
+
+func runEngine[T any](e *Engine, ctx context.Context, generate func(State) []T, sink func(context.Context, <-chan []T) error) (result error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	defer e.config.Analyzer.Close()
+	if !e.config.BorrowAnalyzer {
+		defer func() { result = errors.Join(result, e.config.Analyzer.Close()) }()
+	}
 
 	chunks := make(chan PCMChunk, 8)
-	eventBatches := make(chan []timeline.Event, 1)
+	eventBatches := make(chan []T, 1)
 	sourceDone := make(chan error, 1)
 	sinkDone := make(chan error, 1)
 	var wg sync.WaitGroup
@@ -75,7 +88,7 @@ func (e *Engine) Run(ctx context.Context) error {
 		defer wg.Done()
 		defer close(chunks)
 		err := e.config.Source.Run(ctx, chunks)
-		if errors.Is(err, context.Canceled) {
+		if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 			err = nil
 		}
 		sourceDone <- err
@@ -83,21 +96,26 @@ func (e *Engine) Run(ctx context.Context) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		err := e.config.Sink.Run(ctx, eventBatches)
-		if errors.Is(err, context.Canceled) {
+		err := sink(ctx, eventBatches)
+		if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 			err = nil
 		}
 		sinkDone <- err
+		cancel()
 	}()
 
 	var buffer *WindowBuffer
 	var runErr error
+	var sinkErr error
+	sinkFinished := false
+	sourceFinished := false
 loop:
 	for {
 		select {
 		case <-ctx.Done():
 			break loop
 		case err := <-sinkDone:
+			sinkFinished = true
 			if err != nil {
 				runErr = fmt.Errorf("dispatch live events: %w", err)
 			}
@@ -107,6 +125,7 @@ loop:
 				if err := <-sourceDone; err != nil {
 					runErr = fmt.Errorf("capture audio: %w", err)
 				}
+				sourceFinished = true
 				break loop
 			}
 			if buffer == nil {
@@ -122,14 +141,16 @@ loop:
 			for _, window := range buffer.Push(chunk) {
 				features, err := e.config.Analyzer.Analyze(ctx, window)
 				if err != nil {
-					runErr = fmt.Errorf("analyze live audio: %w", err)
+					if ctx.Err() == nil || !errors.Is(err, ctx.Err()) {
+						runErr = fmt.Errorf("analyze live audio: %w", err)
+					}
 					break loop
 				}
 				state := e.config.Tracker.Update(features)
-				events := e.config.Generator.Generate(state)
+				events := generate(state)
 				dropped := 0
 				if len(events) > 0 {
-					dropped = offerLatestBatch(eventBatches, events)
+					dropped = offerLatest(eventBatches, events)
 				}
 				if observer, ok := e.config.Observer.(OutputObserver); ok {
 					observer.ObserveOutput(OutputActivity{At: state.At, GeneratedEvents: len(events), DroppedEvents: dropped})
@@ -151,10 +172,25 @@ loop:
 		wg.Wait()
 		cancel()
 	}
+	if !sinkFinished {
+		sinkErr = <-sinkDone
+	}
+	if !sourceFinished {
+		if err := <-sourceDone; err != nil {
+			runErr = errors.Join(runErr, fmt.Errorf("capture audio: %w", err))
+		}
+	}
+	if sinkErr != nil {
+		runErr = errors.Join(runErr, fmt.Errorf("dispatch live events: %w", sinkErr))
+	}
 	return runErr
 }
 
 func offerLatestBatch(output chan []timeline.Event, events []timeline.Event) int {
+	return offerLatest(output, events)
+}
+
+func offerLatest[T any](output chan []T, events []T) int {
 	select {
 	case output <- events:
 		return 0

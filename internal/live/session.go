@@ -6,9 +6,9 @@ import (
 	"strings"
 	"sync"
 
-	"lifx-maestro/internal/devices"
-	"lifx-maestro/internal/generation"
-	"lifx-maestro/internal/playback"
+	"github.com/alessio-palumbo/lifx-maestro/internal/devices"
+	"github.com/alessio-palumbo/lifx-maestro/internal/generation"
+	"github.com/alessio-palumbo/lifx-maestro/internal/playback"
 )
 
 type SessionConfig struct {
@@ -49,6 +49,7 @@ func NewSession(config SessionConfig) (*Session, error) {
 	engine, err := NewEngine(EngineConfig{
 		Source: config.Source, Analyzer: config.Analyzer, Tracker: config.Tracker,
 		Generator: config.Generator, Sink: dispatcher, Observer: config.Observer,
+		BorrowAnalyzer: true,
 	})
 	if err != nil {
 		return nil, err

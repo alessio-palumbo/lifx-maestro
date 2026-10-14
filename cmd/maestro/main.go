@@ -13,15 +13,16 @@ import (
 
 	"github.com/urfave/cli/v3"
 
-	"lifx-maestro/internal/analysis"
-	"lifx-maestro/internal/analyzerbin"
-	"lifx-maestro/internal/audio"
-	"lifx-maestro/internal/devices"
-	"lifx-maestro/internal/generation"
-	livemode "lifx-maestro/internal/live"
-	"lifx-maestro/internal/perform"
-	"lifx-maestro/internal/playback"
-	"lifx-maestro/internal/timeline"
+	"github.com/alessio-palumbo/lifx-maestro/internal/analysis"
+	"github.com/alessio-palumbo/lifx-maestro/internal/analyzerbin"
+	"github.com/alessio-palumbo/lifx-maestro/internal/audio"
+	"github.com/alessio-palumbo/lifx-maestro/internal/devices"
+	"github.com/alessio-palumbo/lifx-maestro/internal/generation"
+	livemode "github.com/alessio-palumbo/lifx-maestro/internal/live"
+	"github.com/alessio-palumbo/lifx-maestro/internal/perform"
+	"github.com/alessio-palumbo/lifx-maestro/internal/playback"
+	"github.com/alessio-palumbo/lifx-maestro/internal/timeline"
+	"github.com/alessio-palumbo/lifx-maestro/live/microphone"
 )
 
 func main() {
@@ -226,7 +227,7 @@ func liveCommand() *cli.Command {
 				return err
 			}
 
-			source := livemode.NewMicrophoneSource(livemode.MicrophoneConfig{Device: cmd.String("input")})
+			source := microphone.NewMicrophoneSource(microphone.MicrophoneConfig{Device: cmd.String("input")})
 			session, err := livemode.NewSession(livemode.SessionConfig{
 				Controller: controller, Devices: selected, Source: source, Analyzer: analyzer,
 				Tracker: livemode.NewStateTracker(trackerConfig), Generator: generator,
@@ -246,7 +247,7 @@ func liveCommand() *cli.Command {
 }
 
 func printInputDevices() error {
-	inputs, err := livemode.ListInputDevices()
+	inputs, err := microphone.ListInputDevices()
 	if err != nil {
 		return err
 	}

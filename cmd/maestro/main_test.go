@@ -7,7 +7,8 @@ import (
 	"testing"
 	"time"
 
-	livemode "lifx-maestro/internal/live"
+	livemode "github.com/alessio-palumbo/lifx-maestro/internal/live"
+	"github.com/alessio-palumbo/lifx-maestro/live/microphone"
 )
 
 func TestCommandTreeIncludesExpectedCommands(t *testing.T) {
@@ -123,7 +124,7 @@ func TestNewAnalyzerResolvesRelativePythonOverride(t *testing.T) {
 
 func TestLiveDiagnosticsExposeDecisionInputs(t *testing.T) {
 	var output bytes.Buffer
-	diagnostics := &liveDiagnostics{source: livemode.NewMicrophoneSource(livemode.MicrophoneConfig{}), target: "tv", out: &output}
+	diagnostics := &liveDiagnostics{source: microphone.NewMicrophoneSource(microphone.MicrophoneConfig{}), target: "tv", out: &output}
 	diagnostics.ObserveOutput(livemode.OutputActivity{At: 500 * time.Millisecond, GeneratedEvents: 3, DroppedEvents: 1})
 	diagnostics.Observe(livemode.State{
 		At:              500 * time.Millisecond,

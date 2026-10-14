@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"lifx-maestro/internal/devices"
-	"lifx-maestro/internal/generation"
-	"lifx-maestro/internal/rendering"
-	"lifx-maestro/internal/timeline"
+	"github.com/alessio-palumbo/lifx-maestro/internal/devices"
+	"github.com/alessio-palumbo/lifx-maestro/internal/generation"
+	"github.com/alessio-palumbo/lifx-maestro/internal/rendering"
+	"github.com/alessio-palumbo/lifx-maestro/internal/timeline"
 )
 
 func TestGeneratorIsDeterministicForTimestampedStates(t *testing.T) {

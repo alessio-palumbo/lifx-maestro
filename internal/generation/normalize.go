@@ -3,7 +3,7 @@ package generation
 import (
 	"encoding/json"
 
-	"lifx-maestro/internal/timeline"
+	"github.com/alessio-palumbo/lifx-maestro/internal/timeline"
 )
 
 const minTransitionDurationMS int64 = 20

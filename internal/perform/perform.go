@@ -6,12 +6,12 @@ import (
 	"io"
 	"os"
 
-	"lifx-maestro/internal/analysis"
-	"lifx-maestro/internal/analyzerbin"
-	"lifx-maestro/internal/audio"
-	"lifx-maestro/internal/devices"
-	"lifx-maestro/internal/generation"
-	"lifx-maestro/internal/playback"
+	"github.com/alessio-palumbo/lifx-maestro/internal/analysis"
+	"github.com/alessio-palumbo/lifx-maestro/internal/analyzerbin"
+	"github.com/alessio-palumbo/lifx-maestro/internal/audio"
+	"github.com/alessio-palumbo/lifx-maestro/internal/devices"
+	"github.com/alessio-palumbo/lifx-maestro/internal/generation"
+	"github.com/alessio-palumbo/lifx-maestro/internal/playback"
 )
 
 type Options struct {

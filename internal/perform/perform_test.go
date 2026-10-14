@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"lifx-maestro/internal/analysis"
+	"github.com/alessio-palumbo/lifx-maestro/internal/analysis"
 )
 
 // An unset Options.Analyzer must resolve the analyzer this build ships with,

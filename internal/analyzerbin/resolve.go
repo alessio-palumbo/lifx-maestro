@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"lifx-maestro/internal/analysis"
+	"github.com/alessio-palumbo/lifx-maestro/internal/analysis"
 )
 
 // NewAnalyzer returns an analyzer for the current build: the bundled

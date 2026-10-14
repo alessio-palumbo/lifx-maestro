@@ -5,7 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"lifx-maestro/internal/timeline"
+	"github.com/alessio-palumbo/lifx-maestro/internal/timeline"
 )
 
 type ImmediateExecutor interface {

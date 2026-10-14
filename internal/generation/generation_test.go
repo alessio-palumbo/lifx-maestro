@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"testing"
 
-	"lifx-maestro/internal/analysis"
-	"lifx-maestro/internal/devices"
-	"lifx-maestro/internal/timeline"
+	"github.com/alessio-palumbo/lifx-maestro/internal/analysis"
+	"github.com/alessio-palumbo/lifx-maestro/internal/devices"
+	"github.com/alessio-palumbo/lifx-maestro/internal/timeline"
 )
 
 func TestGenerateCreatesBeatEvents(t *testing.T) {

@@ -3,8 +3,8 @@ package playback
 import (
 	"testing"
 
-	"lifx-maestro/internal/devices"
-	"lifx-maestro/internal/timeline"
+	"github.com/alessio-palumbo/lifx-maestro/internal/devices"
+	"github.com/alessio-palumbo/lifx-maestro/internal/timeline"
 )
 
 func TestColorParamsDecodesTypedParams(t *testing.T) {

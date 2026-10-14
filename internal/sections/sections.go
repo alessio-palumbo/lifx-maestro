@@ -1,6 +1,6 @@
 package sections
 
-import "lifx-maestro/internal/analysis"
+import "github.com/alessio-palumbo/lifx-maestro/internal/analysis"
 
 type Type string
 

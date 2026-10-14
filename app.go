@@ -15,14 +15,15 @@ import (
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
-	"lifx-maestro/internal/analysis"
-	"lifx-maestro/internal/analyzerbin"
-	"lifx-maestro/internal/audio"
-	"lifx-maestro/internal/devices"
-	"lifx-maestro/internal/generation"
-	livemode "lifx-maestro/internal/live"
-	"lifx-maestro/internal/playback"
-	"lifx-maestro/internal/timeline"
+	"github.com/alessio-palumbo/lifx-maestro/internal/analysis"
+	"github.com/alessio-palumbo/lifx-maestro/internal/analyzerbin"
+	"github.com/alessio-palumbo/lifx-maestro/internal/audio"
+	"github.com/alessio-palumbo/lifx-maestro/internal/devices"
+	"github.com/alessio-palumbo/lifx-maestro/internal/generation"
+	livemode "github.com/alessio-palumbo/lifx-maestro/internal/live"
+	"github.com/alessio-palumbo/lifx-maestro/internal/playback"
+	"github.com/alessio-palumbo/lifx-maestro/internal/timeline"
+	"github.com/alessio-palumbo/lifx-maestro/live/microphone"
 )
 
 type App struct {
@@ -234,7 +235,7 @@ func (a *App) shutdown(ctx context.Context) {
 }
 
 func (a *App) LiveInputs() ([]LiveInput, error) {
-	inputs, err := livemode.ListInputDevices()
+	inputs, err := microphone.ListInputDevices()
 	if err != nil {
 		return nil, err
 	}
@@ -309,7 +310,7 @@ func (a *App) StartLive(request LiveRequest) error {
 		_ = analyzer.Close()
 		return err
 	}
-	source := livemode.NewMicrophoneSource(livemode.MicrophoneConfig{Device: request.Input})
+	source := microphone.NewMicrophoneSource(microphone.MicrophoneConfig{Device: request.Input})
 	observer := &wailsLiveObserver{app: a, source: source}
 	session, err := livemode.NewSession(livemode.SessionConfig{
 		Controller: controller, Devices: selected, Source: source, Analyzer: analyzer,
@@ -385,7 +386,7 @@ func (a *App) SetLiveDynamics(dynamics string) error {
 
 type wailsLiveObserver struct {
 	app       *App
-	source    *livemode.MicrophoneSource
+	source    *microphone.MicrophoneSource
 	errorMu   sync.Mutex
 	lastError time.Time
 	warmOnce  sync.Once

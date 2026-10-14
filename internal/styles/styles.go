@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"lifx-maestro/internal/palette"
+	"github.com/alessio-palumbo/lifx-maestro/internal/palette"
 )
 
 type Style struct {

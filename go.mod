@@ -1,4 +1,4 @@
-module lifx-maestro
+module github.com/alessio-palumbo/lifx-maestro
 
 go 1.26
 

@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 	"testing"
 
-	"lifx-maestro/internal/analysis"
-	"lifx-maestro/internal/devices"
-	"lifx-maestro/internal/palette"
-	"lifx-maestro/internal/sections"
-	"lifx-maestro/internal/timeline"
+	"github.com/alessio-palumbo/lifx-maestro/internal/analysis"
+	"github.com/alessio-palumbo/lifx-maestro/internal/devices"
+	"github.com/alessio-palumbo/lifx-maestro/internal/palette"
+	"github.com/alessio-palumbo/lifx-maestro/internal/sections"
+	"github.com/alessio-palumbo/lifx-maestro/internal/timeline"
 )
 
 func testContext(sectionType sections.Type, energy float64) Context {

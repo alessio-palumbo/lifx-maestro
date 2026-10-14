@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	lifxdevice "github.com/alessio-palumbo/lifxlan-go/pkg/device"
-	"lifx-maestro/internal/devices"
-	"lifx-maestro/internal/palette"
-	"lifx-maestro/internal/timeline"
+	"github.com/alessio-palumbo/lifx-maestro/internal/devices"
+	"github.com/alessio-palumbo/lifx-maestro/internal/palette"
+	"github.com/alessio-palumbo/lifx-maestro/internal/timeline"
 )
 
 func TestRenderSingleZoneFallsBackToSetColor(t *testing.T) {

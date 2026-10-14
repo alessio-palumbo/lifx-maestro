@@ -4,9 +4,9 @@ import (
 	"sync"
 	"testing"
 
-	"lifx-maestro/internal/devices"
-	"lifx-maestro/internal/scheduler"
-	"lifx-maestro/internal/timeline"
+	"github.com/alessio-palumbo/lifx-maestro/internal/devices"
+	"github.com/alessio-palumbo/lifx-maestro/internal/scheduler"
+	"github.com/alessio-palumbo/lifx-maestro/internal/timeline"
 )
 
 type recordingController struct {

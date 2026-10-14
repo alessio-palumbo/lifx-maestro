@@ -18,6 +18,10 @@ The current implementation can:
 
 The desktop app adds device discovery, a timeline editor with per-event colors, and audio-synchronized preview with pause and resume.
 
+Go applications can embed Maestro Live through
+`github.com/alessio-palumbo/lifx-maestro/live`. See the [embedded Live API](live/README.md)
+for logical frame output, host resource ownership, and optional microphone/Python helpers.
+
 The project intentionally does not include AI generation, waveform rendering, or live visualization yet.
 
 ## Setup

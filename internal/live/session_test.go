@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"lifx-maestro/internal/devices"
+	"github.com/alessio-palumbo/lifx-maestro/internal/devices"
 )
 
 type sessionController struct {
@@ -76,6 +76,7 @@ func TestNewSessionRequiresDevices(t *testing.T) {
 
 type closingAnalyzer struct {
 	closed bool
+	closes int
 }
 
 func (a *closingAnalyzer) Analyze(context.Context, PCMWindow) (Features, error) {
@@ -84,7 +85,27 @@ func (a *closingAnalyzer) Analyze(context.Context, PCMWindow) (Features, error) 
 
 func (a *closingAnalyzer) Close() error {
 	a.closed = true
+	a.closes++
 	return nil
+}
+
+func TestSessionClosesAnalyzerExactlyOnceAfterRun(t *testing.T) {
+	a := &closingAnalyzer{}
+	infos := []devices.DeviceInfo{{ID: "one", Capabilities: devices.DeviceCapabilities{Kind: devices.DeviceKindSingleZone}}}
+	g, err := NewGenerator(GeneratorConfig{Devices: infos})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := NewSession(SessionConfig{Controller: &sessionController{}, Devices: infos, Source: chunkSource{}, Analyzer: a, Generator: g})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if a.closes != 1 {
+		t.Fatalf("analyzer closed %d times, want 1", a.closes)
+	}
 }
 
 type sessionWaitingSource struct{}

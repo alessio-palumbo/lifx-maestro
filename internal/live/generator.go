@@ -5,40 +5,43 @@ import (
 	"sync"
 	"time"
 
-	"lifx-maestro/internal/devices"
-	"lifx-maestro/internal/generation"
-	"lifx-maestro/internal/palette"
-	"lifx-maestro/internal/rendering"
-	"lifx-maestro/internal/styles"
-	"lifx-maestro/internal/timeline"
+	"github.com/alessio-palumbo/lifx-maestro/internal/devices"
+	"github.com/alessio-palumbo/lifx-maestro/internal/generation"
+	"github.com/alessio-palumbo/lifx-maestro/internal/palette"
+	"github.com/alessio-palumbo/lifx-maestro/internal/rendering"
+	"github.com/alessio-palumbo/lifx-maestro/internal/styles"
+	"github.com/alessio-palumbo/lifx-maestro/internal/timeline"
 )
 
 type GeneratorConfig struct {
-	Style      string
-	Intensity  generation.DynamicsOverride
-	Devices    []devices.DeviceInfo
-	AmbientHop time.Duration
+	Style         string
+	Intensity     generation.DynamicsOverride
+	Devices       []devices.DeviceInfo
+	AmbientHop    time.Duration
+	LogicalFrames bool
 }
 
 type Generator struct {
-	settingsMu  sync.RWMutex
-	styleName   string
-	style       styles.Style
-	intensity   generation.DynamicsOverride
-	devices     []devices.DeviceInfo
-	ambientHop  time.Duration
-	lastAmbient time.Duration
-	lastAccent  time.Duration
-	beatIndex   int
-	phraseIndex int
-	motion      float64
-	lastStateAt time.Duration
+	settingsMu    sync.RWMutex
+	styleName     string
+	style         styles.Style
+	intensity     generation.DynamicsOverride
+	devices       []devices.DeviceInfo
+	ambientHop    time.Duration
+	lastAmbient   time.Duration
+	lastAccent    time.Duration
+	beatIndex     int
+	phraseIndex   int
+	motion        float64
+	lastStateAt   time.Duration
+	logicalFrames bool
 }
 
 type GenerationDecision struct {
 	Intent rendering.IntentKind
 	Accent bool
 	Events []timeline.Event
+	Frames []TargetFrame
 }
 
 func NewGenerator(config GeneratorConfig) (*Generator, error) {
@@ -54,11 +57,12 @@ func NewGenerator(config GeneratorConfig) (*Generator, error) {
 	}
 	style = liveStyle(style, config.Intensity)
 	return &Generator{
-		styleName:  config.Style,
-		style:      style,
-		intensity:  config.Intensity,
-		devices:    config.Devices,
-		ambientHop: config.AmbientHop,
+		styleName:     config.Style,
+		style:         style,
+		intensity:     config.Intensity,
+		devices:       config.Devices,
+		ambientHop:    config.AmbientHop,
+		logicalFrames: config.LogicalFrames,
 	}, nil
 }
 
@@ -109,6 +113,7 @@ func (g *Generator) GenerateDecision(state State) GenerationDecision {
 	}
 
 	var events []timeline.Event
+	var frames []TargetFrame
 	for index, device := range g.devices {
 		spatialIndex := effectIndex
 		spatialPhase := 0.0
@@ -116,7 +121,7 @@ func (g *Generator) GenerateDecision(state State) GenerationDecision {
 			spatialIndex = int(motion)
 			spatialPhase = motion - float64(spatialIndex)
 		}
-		events = append(events, rendering.Render(rendering.EffectIntent{
+		intent := rendering.EffectIntent{
 			Kind:        kind,
 			TimeMS:      state.At.Milliseconds(),
 			Target:      device.ID,
@@ -134,9 +139,14 @@ func (g *Generator) GenerateDecision(state State) GenerationDecision {
 				MultiZone:  true,
 				Matrix:     true,
 			},
-		}, device)...)
+		}
+		if g.logicalFrames {
+			frames = append(frames, TargetFrame{Target: device.ID, Frame: rendering.LogicalFrame(intent, device)})
+		} else {
+			events = append(events, rendering.Render(intent, device)...)
+		}
 	}
-	return GenerationDecision{Intent: kind, Accent: accent, Events: events}
+	return GenerationDecision{Intent: kind, Accent: accent, Events: events, Frames: frames}
 }
 
 // SetStyle changes future events without resetting the generator's timing,

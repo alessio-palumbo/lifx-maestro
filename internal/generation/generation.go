@@ -4,13 +4,13 @@ import (
 	"fmt"
 	"strings"
 
-	"lifx-maestro/internal/analysis"
-	"lifx-maestro/internal/devices"
-	"lifx-maestro/internal/effects"
-	"lifx-maestro/internal/rendering"
-	"lifx-maestro/internal/sections"
-	"lifx-maestro/internal/styles"
-	"lifx-maestro/internal/timeline"
+	"github.com/alessio-palumbo/lifx-maestro/internal/analysis"
+	"github.com/alessio-palumbo/lifx-maestro/internal/devices"
+	"github.com/alessio-palumbo/lifx-maestro/internal/effects"
+	"github.com/alessio-palumbo/lifx-maestro/internal/rendering"
+	"github.com/alessio-palumbo/lifx-maestro/internal/sections"
+	"github.com/alessio-palumbo/lifx-maestro/internal/styles"
+	"github.com/alessio-palumbo/lifx-maestro/internal/timeline"
 )
 
 type Config struct {

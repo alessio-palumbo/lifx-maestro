@@ -5,9 +5,9 @@ import (
 
 	lifxdevice "github.com/alessio-palumbo/lifxlan-go/pkg/device"
 	lifxeffects "github.com/alessio-palumbo/lifxlan-go/pkg/effects"
-	"lifx-maestro/internal/devices"
-	"lifx-maestro/internal/palette"
-	"lifx-maestro/internal/timeline"
+	"github.com/alessio-palumbo/lifx-maestro/internal/devices"
+	"github.com/alessio-palumbo/lifx-maestro/internal/palette"
+	"github.com/alessio-palumbo/lifx-maestro/internal/timeline"
 )
 
 type effectFrame = lifxeffects.Frame

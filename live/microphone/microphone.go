@@ -1,4 +1,4 @@
-package live
+package microphone
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"time"
 	"unsafe"
 
+	livemode "github.com/alessio-palumbo/lifx-maestro/live"
 	"github.com/gen2brain/malgo"
 )
 
@@ -58,7 +59,7 @@ func (s *MicrophoneSource) Name() string {
 	return s.name
 }
 
-func (s *MicrophoneSource) Run(ctx context.Context, output chan<- PCMChunk) error {
+func (s *MicrophoneSource) Run(ctx context.Context, output chan<- livemode.PCMChunk) error {
 	malgoContext, err := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
 	if err != nil {
 		return fmt.Errorf("initialize audio capture: %w", err)
@@ -112,7 +113,7 @@ func (s *MicrophoneSource) Run(ctx context.Context, output chan<- PCMChunk) erro
 			bits := binary.LittleEndian.Uint32(input[index*4 : index*4+4])
 			samples[index] = math.Float32frombits(bits)
 		}
-		chunk := PCMChunk{Samples: samples, SampleRate: s.config.SampleRate, CapturedAt: time.Since(started)}
+		chunk := livemode.PCMChunk{Samples: samples, SampleRate: s.config.SampleRate, CapturedAt: time.Since(started)}
 		select {
 		case output <- chunk:
 		default:

@@ -11,8 +11,8 @@ import (
 	"sort"
 	"time"
 
-	"lifx-maestro/internal/analysis"
-	"lifx-maestro/internal/timeline"
+	"github.com/alessio-palumbo/lifx-maestro/internal/analysis"
+	"github.com/alessio-palumbo/lifx-maestro/internal/timeline"
 )
 
 const (

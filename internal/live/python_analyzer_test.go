@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -77,6 +78,9 @@ func TestPythonAnalyzerHelper(t *testing.T) {
 		if sampleRate == 0 || len(samples) == 0 {
 			os.Exit(2)
 		}
+		if os.Getenv("MAESTRO_LIVE_ANALYZER_STALL") == "1" {
+			time.Sleep(time.Minute)
+		}
 		recentRMSDB := -22.0
 		recentLowDB, recentMidDB, recentHighDB := -30.0, -32.0, -40.0
 		_ = json.NewEncoder(os.Stdout).Encode(liveFeatureResponse{
@@ -100,5 +104,30 @@ func TestPythonAnalyzerHelper(t *testing.T) {
 			}{{BPM: 80, Confidence: 0.8, Strength: 0.7}},
 			Beat: true,
 		})
+	}
+}
+
+func TestPythonAnalyzerCancellationInterruptsPipeRead(t *testing.T) {
+	cmd := exec.Command(os.Args[0], "-test.run=TestPythonAnalyzerHelper")
+	cmd.Env = append(os.Environ(), "MAESTRO_LIVE_ANALYZER_HELPER=1", "MAESTRO_LIVE_ANALYZER_STALL=1")
+	a, err := startPythonAnalyzer(cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := a.Analyze(ctx, PCMWindow{SampleRate: 16000, Samples: []float32{0.1}, End: time.Second})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Analyze = %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Analyze remained blocked after cancellation")
 	}
 }

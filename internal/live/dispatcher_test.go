@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"lifx-maestro/internal/timeline"
+	"github.com/alessio-palumbo/lifx-maestro/internal/timeline"
 )
 
 type blockingExecutor struct {

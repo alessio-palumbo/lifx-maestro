@@ -3,7 +3,7 @@ package sections
 import (
 	"testing"
 
-	"lifx-maestro/internal/analysis"
+	"github.com/alessio-palumbo/lifx-maestro/internal/analysis"
 )
 
 func TestFallbackSectionsUseEarlyBuildAndDrop(t *testing.T) {

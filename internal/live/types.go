@@ -4,7 +4,9 @@ import (
 	"context"
 	"time"
 
-	"lifx-maestro/internal/timeline"
+	lifxeffects "github.com/alessio-palumbo/lifxlan-go/pkg/effects"
+
+	"github.com/alessio-palumbo/lifx-maestro/internal/timeline"
 )
 
 type PCMChunk struct {
@@ -91,6 +93,16 @@ type Analyzer interface {
 
 type EventSink interface {
 	Run(ctx context.Context, input <-chan []timeline.Event) error
+}
+
+// TargetFrame contains a full logical surface, before device adaptation.
+type TargetFrame struct {
+	Target string
+	Frame  lifxeffects.Frame
+}
+
+type FrameSink interface {
+	Run(context.Context, <-chan []TargetFrame) error
 }
 
 type Observer interface {

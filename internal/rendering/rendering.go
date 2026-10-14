@@ -2,10 +2,13 @@ package rendering
 
 import (
 	"math"
+	"time"
 
-	"lifx-maestro/internal/devices"
-	"lifx-maestro/internal/palette"
-	"lifx-maestro/internal/timeline"
+	lifxeffects "github.com/alessio-palumbo/lifxlan-go/pkg/effects"
+
+	"github.com/alessio-palumbo/lifx-maestro/internal/devices"
+	"github.com/alessio-palumbo/lifx-maestro/internal/palette"
+	"github.com/alessio-palumbo/lifx-maestro/internal/timeline"
 )
 
 type IntentKind string
@@ -52,6 +55,44 @@ type SingleZoneRenderer struct{}
 type MultiZoneRenderer struct{}
 type MatrixRenderer struct{}
 
+// LogicalFrame returns the complete logical surface. No physical adaptation,
+// hidden-cell masking, or orientation has been applied. The host renderer owns
+// that conversion and must receive this frame exactly once.
+func LogicalFrame(intent EffectIntent, device devices.DeviceInfo) lifxeffects.Frame {
+	switch device.Capabilities.Kind {
+	case devices.DeviceKindMultiZone:
+		count := zoneCount(device)
+		surface := surfaceForMultiZone(device, count)
+		switch intent.Kind {
+		case IntentSweep:
+			return multiZoneSweepFrame(intent, surface, count, 1)
+		case IntentPulse:
+			return multiZonePulseFrame(intent, surface, count, 1)
+		default:
+			return driftFrame(intent, surface, count, 1)
+		}
+	case devices.DeviceKindMatrix:
+		width, height := matrixDimensions(device)
+		surface := surfaceForMatrix(device, width, height)
+		switch intent.Kind {
+		case IntentPulse:
+			return matrixRingFrame(intent, surface, width, height)
+		case IntentSweep, IntentMatrixWave:
+			return matrixWaveFrame(intent, surface, width, height)
+		default:
+			return driftFrame(intent, surface, width, height)
+		}
+	default:
+		color := intent.Color
+		if color.Kelvin == 0 {
+			color = intent.Palette.ColorForDevice(intent.DeviceIndex, intent.DeviceTotal)
+		} else if intent.DeviceTotal > 1 {
+			color = intent.Palette.ColorForDevice(intent.DeviceIndex+intent.BeatIndex, intent.DeviceTotal)
+		}
+		return lifxeffects.NewFrame(1, 1, time.Duration(intent.DurationMS)*time.Millisecond, effectColor(color, intent.Brightness))
+	}
+}
+
 func Render(intent EffectIntent, device devices.DeviceInfo) []timeline.Event {
 	switch device.Capabilities.Kind {
 	case devices.DeviceKindMultiZone:
@@ -82,15 +123,7 @@ func (MultiZoneRenderer) Render(intent EffectIntent, device devices.DeviceInfo) 
 	count := zoneCount(device)
 	surface := surfaceForMultiZone(device, count)
 
-	var frame effectFrame
-	switch intent.Kind {
-	case IntentSweep:
-		frame = multiZoneSweepFrame(intent, surface, count, 1)
-	case IntentPulse:
-		frame = multiZonePulseFrame(intent, surface, count, 1)
-	default:
-		frame = driftFrame(intent, surface, count, 1)
-	}
+	frame := LogicalFrame(intent, device)
 
 	deviceFrames := adaptFrame(frame, surface)
 	if len(deviceFrames) > 0 && len(deviceFrames[0].Colors) > 0 {
@@ -106,15 +139,7 @@ func (MatrixRenderer) Render(intent EffectIntent, device devices.DeviceInfo) []t
 	width, height := matrixDimensions(device)
 	surface := surfaceForMatrix(device, width, height)
 
-	var frame effectFrame
-	switch intent.Kind {
-	case IntentPulse:
-		frame = matrixRingFrame(intent, surface, width, height)
-	case IntentSweep, IntentMatrixWave:
-		frame = matrixWaveFrame(intent, surface, width, height)
-	default:
-		frame = driftFrame(intent, surface, width, height)
-	}
+	frame := LogicalFrame(intent, device)
 
 	deviceFrames := adaptFrame(frame, surface)
 	if len(deviceFrames) > 0 && len(deviceFrames[0].Colors) > 0 {

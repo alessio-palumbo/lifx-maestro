@@ -13,14 +13,14 @@ import (
 	"sync"
 	"time"
 
-	"lifx-maestro/internal/analysis"
+	"github.com/alessio-palumbo/lifx-maestro/internal/analysis"
 )
 
 type PythonAnalyzer struct {
 	cmd     *exec.Cmd
 	stdin   io.WriteCloser
 	decoder *json.Decoder
-	stderr  bytes.Buffer
+	stderr  synchronizedBuffer
 
 	mu     sync.Mutex
 	closed bool
@@ -72,6 +72,10 @@ func (a *PythonAnalyzer) Analyze(ctx context.Context, window PCMWindow) (Feature
 	if a.closed {
 		return Features{}, errors.New("live analyzer is closed")
 	}
+	// A host may give the process a longer lifetime than an individual Live
+	// run. Canceling Analyze must still interrupt blocking pipe I/O.
+	stopCancel := context.AfterFunc(ctx, func() { _ = a.cmd.Process.Kill() })
+	defer stopCancel()
 
 	var request bytes.Buffer
 	if err := binary.Write(&request, binary.LittleEndian, uint32(window.SampleRate)); err != nil {
@@ -87,11 +91,17 @@ func (a *PythonAnalyzer) Analyze(ctx context.Context, window PCMWindow) (Feature
 		return Features{}, err
 	}
 	if _, err := a.stdin.Write(request.Bytes()); err != nil {
+		if ctx.Err() != nil {
+			return Features{}, ctx.Err()
+		}
 		return Features{}, a.processError("write PCM window", err)
 	}
 
 	var response liveFeatureResponse
 	if err := a.decoder.Decode(&response); err != nil {
+		if ctx.Err() != nil {
+			return Features{}, ctx.Err()
+		}
 		return Features{}, a.processError("read feature response", err)
 	}
 	return response.features(), nil
@@ -105,10 +115,29 @@ func (a *PythonAnalyzer) Close() error {
 	}
 	a.closed = true
 	_ = a.stdin.Close()
+	kill := time.AfterFunc(3*time.Second, func() { _ = a.cmd.Process.Kill() })
+	defer kill.Stop()
 	if err := a.cmd.Wait(); err != nil && a.cmd.ProcessState != nil && !a.cmd.ProcessState.Success() {
 		return a.processError("stop", err)
 	}
 	return nil
+}
+
+type synchronizedBuffer struct {
+	mu     sync.Mutex
+	buffer bytes.Buffer
+}
+
+func (b *synchronizedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buffer.Write(p)
+}
+
+func (b *synchronizedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buffer.String()
 }
 
 func (a *PythonAnalyzer) processError(operation string, err error) error {

@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"lifx-maestro/internal/analysis"
-	"lifx-maestro/internal/devices"
+	"github.com/alessio-palumbo/lifx-maestro/internal/analysis"
+	"github.com/alessio-palumbo/lifx-maestro/internal/devices"
 )
 
 func TestNormalizePCMLevelUsesRequestedRMS(t *testing.T) {
