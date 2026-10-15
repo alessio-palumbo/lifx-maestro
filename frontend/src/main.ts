@@ -245,6 +245,7 @@ type AppState = {
   liveStyle: string;
   liveIntensity: string;
   liveSensitivity: string;
+  liveAnalyzer: string;
   liveRunning: boolean;
   liveStarting: boolean;
   livePreparingAnalyzer: boolean;
@@ -302,6 +303,7 @@ const state: AppState = {
   liveStyle: 'synthwave',
   liveIntensity: 'auto',
   liveSensitivity: 'low',
+  liveAnalyzer: 'python',
   liveRunning: false,
   liveStarting: false,
   livePreparingAnalyzer: false,
@@ -558,6 +560,10 @@ function renderLiveWorkspace() {
               <summary class="panel-toggle" title="Microphone settings" aria-label="Microphone settings">${iconSVG('settings')}</summary>
               <div class="live-settings-menu">
                 <label class="field live-field" ${captureHint}><span>Input</span><select id="live-input" ${captureDisabled}>${inputOptions}</select></label>
+                <label class="field live-field" ${captureHint}><span>Analyzer</span><select id="live-analyzer" ${captureDisabled}>
+                  <option value="python" ${state.liveAnalyzer === 'python' ? 'selected' : ''}>Python</option>
+                  <option value="native" ${state.liveAnalyzer === 'native' ? 'selected' : ''}>Native Go (experimental)</option>
+                </select></label>
                 <label class="field live-field" ${captureHint}><span>Sensitivity</span><select id="live-sensitivity" ${captureDisabled}>
                   ${['low', 'normal', 'high'].map((value) => `<option value="${value}" ${state.liveSensitivity === value ? 'selected' : ''}>${capitalize(value)}</option>`).join('')}
                 </select></label>
@@ -1327,6 +1333,9 @@ function bindEvents() {
   document.querySelector('#live-sensitivity')?.addEventListener('change', () => {
     state.liveSensitivity = inputValue('live-sensitivity', 'low');
   });
+  document.querySelector('#live-analyzer')?.addEventListener('change', () => {
+    state.liveAnalyzer = inputValue('live-analyzer', 'python');
+  });
   document.querySelector('#live-intensity')?.addEventListener('change', async () => {
     const selectedDynamics = inputValue('live-intensity', 'auto');
     const previousDynamics = state.liveIntensity;
@@ -1586,10 +1595,11 @@ async function startLiveSession() {
   state.error = null;
   state.status = 'Starting Maestro Live';
   render();
-  state.livePreparingAnalyzer = await analyzerPreparing();
+  state.livePreparingAnalyzer = state.liveAnalyzer === 'python' && await analyzerPreparing();
   if (state.livePreparingAnalyzer) render();
   try {
     await StartLive({
+      analyzer: state.liveAnalyzer,
       input: state.liveInput,
       target: targetString(),
       style: state.liveStyle,

@@ -2,6 +2,7 @@ package audio
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,10 +49,17 @@ func DecodePCM(path string) (*PCMData, error) {
 	}
 	samples := make([]float32, 0, capacity)
 	frames := make([][2]float64, 4096)
+	scale := 1.0
+	if strings.EqualFold(filepath.Ext(path), ".wav") && format.Precision > 1 {
+		// Beep divides signed PCM by the full unsigned range. Restore the
+		// standard full-scale amplitude for recorded-level evaluation.
+		bits := 8 * format.Precision
+		scale = (math.Exp2(float64(bits)) - 1) / math.Exp2(float64(bits-1))
+	}
 	for {
 		n, ok := streamer.Stream(frames)
 		for _, frame := range frames[:n] {
-			samples = append(samples, float32((frame[0]+frame[1])/2))
+			samples = append(samples, float32((frame[0]+frame[1])/2*scale))
 		}
 		if !ok {
 			break

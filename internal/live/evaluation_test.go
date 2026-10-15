@@ -25,6 +25,30 @@ func TestNormalizePCMLevelUsesRequestedRMS(t *testing.T) {
 	}
 }
 
+func TestEvaluationCanPreserveRecordingWithoutSyntheticCalibration(t *testing.T) {
+	a := &windowAnalyzer{}
+	g, err := NewGenerator(GeneratorConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pcm := []float32{0.001, -0.001, 0.001, -0.001, 0.001, -0.001}
+	trace, err := EvaluatePCM(context.Background(), "microphone.wav", pcm, 10, EvaluationConfig{
+		Analyzer: a, Generator: g, PreserveInputLevel: true, SkipCalibration: true,
+		WindowDuration: 400 * time.Millisecond, HopDuration: 200 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !trace.PreservedInputLevel || trace.CalibrationMS != 0 || a.windows[0].Samples[0] != pcm[0] {
+		t.Fatalf("recording altered: %+v", trace)
+	}
+	var report bytes.Buffer
+	WriteEvaluationReport(&report, trace)
+	if !strings.Contains(report.String(), "preserved from recording") || !strings.Contains(report.String(), "recorded opening audio") {
+		t.Fatalf("incorrect report: %s", report.String())
+	}
+}
+
 func TestEvaluatePCMUsesProductionRollingPipeline(t *testing.T) {
 	analyzer := &windowAnalyzer{}
 	generator, err := NewGenerator(GeneratorConfig{

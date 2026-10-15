@@ -367,6 +367,7 @@ export namespace main {
 	    }
 	}
 	export class LiveRequest {
+	    analyzer: string;
 	    input: string;
 	    target: string;
 	    style: string;
@@ -379,6 +380,7 @@ export namespace main {
 
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.analyzer = source["analyzer"];
 	        this.input = source["input"];
 	        this.target = source["target"];
 	        this.style = source["style"];

@@ -43,6 +43,27 @@ accepts `auto`, `calm`, `balanced`, or `energetic`. Microphone sensitivity can b
 configured with `TrackerConfigForSensitivity`. Defaults retain the existing
 500 ms overlapping analysis window and 100 ms hop.
 
+`Config.MasterBrightness` is an optional `*float64` factor: nil means 100%,
+while a pointer to zero explicitly selects zero. `Engine.SetMasterBrightness`
+is safe during playback and affects the next outgoing batch, including pending
+frames, but not a sink write already in progress. Factors clamp to [0,1]; NaN
+resets to 1. Each batch uses one factor and scales from its original generated
+brightness, never from a previously scaled result. Colors, frame duration,
+geometry and generation decisions are unchanged.
+
+As in Maestro playback, a nonpositive scaled brightness is sent as 1% so the
+show remains visible; zero is not blackout and never changes power. Positive
+results below 1% remain unchanged. At full scale frames pass through unchanged,
+including intentional zero-brightness cells. Hosts needing blackout should
+manage it through their own output/power lifecycle. For example:
+
+```go
+half := 0.5
+config.MasterBrightness = &half // Read once by live.New; later use the setter.
+// After constructing engine:
+engine.SetMasterBrightness(0.25)
+```
+
 Optional integrations:
 
 - `live/microphone`: native capture and input enumeration using malgo. Importing
@@ -51,7 +72,31 @@ Optional integrations:
   or Python interpreter plus script. Supply absolute paths. This helper does
   not extract the bundled analyzer. Cancellation during analysis terminates
   that process; create a new analyzer for the next run and close the old one.
+- `live/native`: experimental in-process Go DSP with no Python runtime. Use
+  `native.New()` as the injected analyzer and close it after the run. Python
+  remains the standalone default while hardware parity is evaluated. The
+  domain-independent implementation is in `internal/audiodsp`, ready for future
+  extraction into a separate audio-analysis module.
 
 The host may use its own implementations instead. No Wails dependency is needed
 for the core API. Real microphone/audio analysis and physical LAN behavior need
 host integration testing; the external-package tests use only injected fakes.
+
+For native analysis, import
+`github.com/alessio-palumbo/lifx-maestro/live/native` and inject it into the same
+configuration used with the Python analyzer:
+
+```go
+analyzer := native.New()
+defer analyzer.Close()
+config.Analyzer = analyzer // Existing live.Config with host source, targets and sink.
+engine, err := live.New(config)
+if err != nil {
+    return err
+}
+return engine.Run(ctx)
+```
+
+No Python runtime paths or sidecar are needed for this path. Cancellation and
+host ownership of lights remain unchanged. This replaces Live analysis only;
+offline song analysis still uses Python/Librosa.

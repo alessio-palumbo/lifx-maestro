@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -9,7 +11,61 @@ import (
 
 	livemode "github.com/alessio-palumbo/lifx-maestro/internal/live"
 	"github.com/alessio-palumbo/lifx-maestro/live/microphone"
+	"github.com/urfave/cli/v3"
 )
+
+func TestNativeLiveSelectionDoesNotRequirePython(t *testing.T) {
+	command := &cli.Command{Name: "test", Flags: liveCommand().Flags, Action: func(ctx context.Context, cmd *cli.Command) error {
+		a, err := newLiveAnalyzer(ctx, cmd)
+		if err != nil {
+			return err
+		}
+		defer a.Close()
+		f, err := a.Analyze(ctx, livemode.PCMWindow{Samples: make([]float32, 8000), SampleRate: 16000, End: 500 * time.Millisecond})
+		if err == nil && (!f.HasRecentRMS || f.RMSDB != -120) {
+			t.Fatalf("unexpected native features: %+v", f)
+		}
+		return err
+	}}
+	if err := command.Run(context.Background(), []string{"test", "--analyzer", "native", "--python", "/does/not/exist"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRecordInputRefusesInvalidRequestsWithoutCapture(t *testing.T) {
+	existing := filepath.Join(t.TempDir(), "existing.wav")
+	if err := os.WriteFile(existing, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"maestro", "record-input", "--duration", "0s", filepath.Join(t.TempDir(), "zero.wav")},
+		{"maestro", "record-input", "--duration", "11m", filepath.Join(t.TempDir(), "long.wav")},
+		{"maestro", "record-input", filepath.Join(t.TempDir(), "wrong.mp3")},
+		{"maestro", "record-input", existing},
+	} {
+		if err := newCommand().Run(context.Background(), args); err == nil {
+			t.Fatalf("invalid recording accepted: %v", args)
+		}
+	}
+	data, err := os.ReadFile(existing)
+	if err != nil || string(data) != "keep" {
+		t.Fatal("existing recording changed")
+	}
+}
+
+func TestLiveAnalyzerSelectionStillDefaultsToPython(t *testing.T) {
+	for _, flags := range [][]cli.Flag{liveCommand().Flags, evaluateLiveCommand().Flags} {
+		command := &cli.Command{Name: "test", Flags: flags, Action: func(_ context.Context, cmd *cli.Command) error {
+			if cmd.String("analyzer") != "python" {
+				t.Fatal("default Live backend changed")
+			}
+			return nil
+		}}
+		if err := command.Run(context.Background(), []string{"test"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
 
 func TestCommandTreeIncludesExpectedCommands(t *testing.T) {
 	cmd := newCommand()

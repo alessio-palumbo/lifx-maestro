@@ -9,6 +9,7 @@ require (
 	github.com/gopxl/beep v1.4.1
 	github.com/urfave/cli/v3 v3.14.0
 	github.com/wailsapp/wails/v2 v2.16.0
+	gonum.org/v1/gonum v0.17.0
 )
 
 require (

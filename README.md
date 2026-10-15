@@ -22,6 +22,60 @@ Go applications can embed Maestro Live through
 `github.com/alessio-palumbo/lifx-maestro/live`. See the [embedded Live API](live/README.md)
 for logical frame output, host resource ownership, and optional microphone/Python helpers.
 
+### Experimental Native Live Analyzer
+
+Python remains the default for Live and offline generation. To test the new Go
+analyzer with a microphone, without launching or extracting the Python analyzer:
+
+```sh
+go run ./cmd/maestro live --analyzer native --target "Beam" --verbose
+```
+
+Compare both analyzers on identical decoded PCM and synthetic light targets:
+
+```sh
+go run ./cmd/maestro evaluate-live --skip-offline --compare-native \
+  --python analyzer/.venv/bin/python samples/minimal-piano.mp3
+```
+
+The comparison reports numeric feature differences, onset/beat differences,
+tempo candidate differences, show decision differences, and timeline event
+differences. `--output` includes the comparison in the reference trace JSON.
+To evaluate only Go, use `--analyzer native --skip-offline`. Without `--skip-offline`,
+the separate full-song comparison still uses Python. In the desktop Live view,
+open the microphone settings cog and select **Native Go (experimental)** under
+**Analyzer** before starting capture. Python remains selected by default; stop
+Live before switching analyzers. Native Live does not wait for Python warmup,
+although the app still prepares Python for offline analysis in the background.
+See [native DSP notes](internal/audiodsp/README.md) for architecture,
+parity testing, and known limits.
+
+Record microphone fixtures using the same input source and 16 kHz rate as Live:
+
+```sh
+go run ./cmd/maestro record-input --duration 30s samples/microphone-test.wav
+```
+
+The command writes a mono 24-bit WAV at the captured level, never overwrites an
+existing file, and saves a shorter recording on Ctrl-C. Use `--input` to select
+a microphone (enumerate inputs with `maestro live --list-inputs`). Recording is
+limited to ten minutes, uses no light controller or analyzer, and happens only
+when explicitly requested with `record-input`; normal Live never saves audio.
+
+Keep a few seconds of room sound at the start, then try music, taps, singing,
+quiet passages, and abrupt stops. Compare the recorded sample without gain
+normalization or synthetic noise-floor priming:
+
+```sh
+go run ./cmd/maestro evaluate-live --skip-offline --compare-native \
+  --preserve-level --no-calibration --python analyzer/.venv/bin/python \
+  samples/microphone-test.wav
+```
+
+`--no-calibration` skips only the artificial pre-roll: noise-floor learning still
+runs normally on the opening audio. These flags are opt-in; existing evaluations
+keep their normalized level and synthetic calibration.
+
 The project intentionally does not include AI generation, waveform rendering, or live visualization yet.
 
 ## Setup

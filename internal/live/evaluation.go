@@ -29,10 +29,12 @@ type EvaluationConfig struct {
 	Tracker   *StateTracker
 	Generator *Generator
 
-	WindowDuration time.Duration
-	HopDuration    time.Duration
-	InputLevelDB   float64
-	Calibration    time.Duration
+	WindowDuration     time.Duration
+	HopDuration        time.Duration
+	InputLevelDB       float64
+	Calibration        time.Duration
+	PreserveInputLevel bool
+	SkipCalibration    bool
 }
 
 type EvaluationPoint struct {
@@ -62,18 +64,20 @@ type EvaluationPoint struct {
 }
 
 type EvaluationTrace struct {
-	Source        string             `json:"source"`
-	SampleRate    int                `json:"sample_rate"`
-	DurationMS    int64              `json:"duration_ms"`
-	WindowMS      int64              `json:"window_ms"`
-	HopMS         int64              `json:"hop_ms"`
-	InputLevelDB  float64            `json:"input_level_db"`
-	CalibrationMS int64              `json:"calibration_ms"`
-	Points        []EvaluationPoint  `json:"points"`
-	Events        []timeline.Event   `json:"events"`
-	Summary       EvaluationSummary  `json:"summary"`
-	Comparison    *OfflineComparison `json:"offline_comparison,omitempty"`
-	Buckets       []EvaluationBucket `json:"buckets,omitempty"`
+	Source              string              `json:"source"`
+	SampleRate          int                 `json:"sample_rate"`
+	DurationMS          int64               `json:"duration_ms"`
+	WindowMS            int64               `json:"window_ms"`
+	HopMS               int64               `json:"hop_ms"`
+	InputLevelDB        float64             `json:"input_level_db"`
+	CalibrationMS       int64               `json:"calibration_ms"`
+	PreservedInputLevel bool                `json:"preserved_input_level,omitempty"`
+	Points              []EvaluationPoint   `json:"points"`
+	Events              []timeline.Event    `json:"events"`
+	Summary             EvaluationSummary   `json:"summary"`
+	Comparison          *OfflineComparison  `json:"offline_comparison,omitempty"`
+	AnalyzerComparison  *AnalyzerComparison `json:"analyzer_comparison,omitempty"`
+	Buckets             []EvaluationBucket  `json:"buckets,omitempty"`
 }
 
 type EvaluationSummary struct {
@@ -144,8 +148,11 @@ func EvaluatePCM(ctx context.Context, source string, samples []float32, sampleRa
 	if config.InputLevelDB == 0 {
 		config.InputLevelDB = DefaultEvaluationInputDB
 	}
-	if config.Calibration == 0 {
+	if config.Calibration == 0 && !config.SkipCalibration {
 		config.Calibration = DefaultEvaluationCalibration
+	}
+	if config.SkipCalibration {
+		config.Calibration = 0
 	}
 	defer func() {
 		if closeErr := config.Analyzer.Close(); err == nil && closeErr != nil {
@@ -154,16 +161,19 @@ func EvaluatePCM(ctx context.Context, source string, samples []float32, sampleRa
 	}()
 
 	trace = &EvaluationTrace{
-		Source:        source,
-		SampleRate:    sampleRate,
-		DurationMS:    sampleDuration(sampleRate, int64(len(samples))).Milliseconds(),
-		WindowMS:      config.WindowDuration.Milliseconds(),
-		HopMS:         config.HopDuration.Milliseconds(),
-		InputLevelDB:  config.InputLevelDB,
-		CalibrationMS: config.Calibration.Milliseconds(),
+		Source:              source,
+		SampleRate:          sampleRate,
+		DurationMS:          sampleDuration(sampleRate, int64(len(samples))).Milliseconds(),
+		WindowMS:            config.WindowDuration.Milliseconds(),
+		HopMS:               config.HopDuration.Milliseconds(),
+		InputLevelDB:        config.InputLevelDB,
+		CalibrationMS:       config.Calibration.Milliseconds(),
+		PreservedInputLevel: config.PreserveInputLevel,
 	}
 	primeEvaluationTracker(config.Tracker, config.Calibration, config.HopDuration)
-	samples = normalizePCMLevel(samples, config.InputLevelDB)
+	if !config.PreserveInputLevel {
+		samples = normalizePCMLevel(samples, config.InputLevelDB)
+	}
 	buffer := NewWindowBuffer(sampleRate, config.WindowDuration, config.HopDuration)
 	for start := 0; start < len(samples); start += evaluationChunkSamples {
 		end := start + evaluationChunkSamples
@@ -265,7 +275,16 @@ func WriteEvaluationReport(out io.Writer, trace *EvaluationTrace) {
 	summary := trace.Summary
 	fmt.Fprintf(out, "file                 %s\n", trace.Source)
 	fmt.Fprintf(out, "duration             %.1fs\n", float64(trace.DurationMS)/1000)
-	fmt.Fprintf(out, "simulated input      %.1f dB RMS after %.1fs calibration\n", trace.InputLevelDB, float64(trace.CalibrationMS)/1000)
+	if trace.PreservedInputLevel {
+		fmt.Fprintf(out, "input level          preserved from recording\n")
+	} else {
+		fmt.Fprintf(out, "simulated input      %.1f dB RMS\n", trace.InputLevelDB)
+	}
+	if trace.CalibrationMS == 0 {
+		fmt.Fprintln(out, "calibration          learned from the recorded opening audio")
+	} else {
+		fmt.Fprintf(out, "calibration          %.1fs synthetic room noise\n", float64(trace.CalibrationMS)/1000)
+	}
 	fmt.Fprintf(out, "live stable tempo    %.1f BPM\n", summary.MedianTempoBPM)
 	fmt.Fprintf(out, "stable-clock coverage %.1f%%\n", summary.StableTempoPercent)
 	fmt.Fprintf(out, "active / ambient     %.1f%% / %.1f%%\n", summary.ActivePercent, summary.SustainedPercent)

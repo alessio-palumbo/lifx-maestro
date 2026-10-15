@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -21,8 +22,10 @@ import (
 	livemode "github.com/alessio-palumbo/lifx-maestro/internal/live"
 	"github.com/alessio-palumbo/lifx-maestro/internal/perform"
 	"github.com/alessio-palumbo/lifx-maestro/internal/playback"
+	"github.com/alessio-palumbo/lifx-maestro/internal/recording"
 	"github.com/alessio-palumbo/lifx-maestro/internal/timeline"
 	"github.com/alessio-palumbo/lifx-maestro/live/microphone"
+	"github.com/alessio-palumbo/lifx-maestro/live/native"
 )
 
 func main() {
@@ -42,6 +45,7 @@ func newCommand() *cli.Command {
 			evaluateLiveCommand(),
 			generateCommand(),
 			liveCommand(),
+			recordInputCommand(),
 			performCommand(),
 			playCommand(),
 			stylesCommand(),
@@ -62,6 +66,10 @@ func evaluateLiveCommand() *cli.Command {
 			&cli.Float64Flag{Name: "input-level", Value: livemode.DefaultEvaluationInputDB, Usage: "simulated microphone RMS level in dB"},
 			&cli.StringFlag{Name: "output", Usage: "write the complete state and event trace as JSON"},
 			&cli.BoolFlag{Name: "skip-offline", Usage: "skip comparison with full-track analysis"},
+			&cli.StringFlag{Name: "analyzer", Value: "python", Usage: "Live analyzer backend (python or experimental native)"},
+			&cli.BoolFlag{Name: "compare-native", Usage: "compare Python and native features and choreography on identical PCM"},
+			&cli.BoolFlag{Name: "preserve-level", Usage: "preserve recorded amplitude instead of normalizing"},
+			&cli.BoolFlag{Name: "no-calibration", Usage: "learn startup noise floor from the recording instead of priming it"},
 			&cli.StringFlag{Name: "python", Usage: "python executable (overrides the bundled analyzer)"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -80,11 +88,6 @@ func evaluateLiveCommand() *cli.Command {
 			if err != nil {
 				return err
 			}
-			analyzerConfig, err := newAnalyzer(cmd)
-			if err != nil {
-				return err
-			}
-
 			fmt.Fprintln(os.Stderr, "decoding audio...")
 			pcm, err := audio.DecodePCM(audioPath)
 			if err != nil {
@@ -92,13 +95,17 @@ func evaluateLiveCommand() *cli.Command {
 			}
 			var offline *analysis.SongAnalysis
 			if !cmd.Bool("skip-offline") {
+				analyzerConfig, err := newAnalyzer(cmd)
+				if err != nil {
+					return err
+				}
 				fmt.Fprintln(os.Stderr, "running full-track comparison...")
 				offline, err = analyzerConfig.Analyze(ctx, audioPath)
 				if err != nil {
 					return fmt.Errorf("run offline comparison: %w", err)
 				}
 			}
-			analyzer, err := livemode.NewPythonAnalyzer(ctx, analyzerConfig)
+			analyzer, err := newLiveAnalyzer(ctx, cmd)
 			if err != nil {
 				return err
 			}
@@ -112,15 +119,39 @@ func evaluateLiveCommand() *cli.Command {
 				return err
 			}
 			fmt.Fprintln(os.Stderr, "running rolling Live pipeline...")
-			trace, err := livemode.EvaluatePCM(ctx, audioPath, pcm.Samples, pcm.SampleRate, livemode.EvaluationConfig{
+			config := livemode.EvaluationConfig{
 				Analyzer: analyzer, Tracker: livemode.NewStateTracker(trackerConfig), Generator: generator,
-				InputLevelDB: cmd.Float64("input-level"),
-			})
+				InputLevelDB:       cmd.Float64("input-level"),
+				PreserveInputLevel: cmd.Bool("preserve-level"), SkipCalibration: cmd.Bool("no-calibration"),
+			}
+			var trace *livemode.EvaluationTrace
+			var comparison *livemode.AnalyzerComparison
+			if cmd.Bool("compare-native") {
+				if cmd.String("analyzer") != "python" {
+					_ = analyzer.Close()
+					return fmt.Errorf("--compare-native requires --analyzer python")
+				}
+				nativeGenerator, err := livemode.NewGenerator(livemode.GeneratorConfig{Style: cmd.String("style"), Intensity: generation.DynamicsOverride(cmd.String("intensity")), Devices: selected})
+				if err != nil {
+					_ = analyzer.Close()
+					return err
+				}
+				trace, _, comparison, err = livemode.ComparePCM(ctx, audioPath, pcm.Samples, pcm.SampleRate, config, livemode.EvaluationConfig{
+					Analyzer: native.New(), Tracker: livemode.NewStateTracker(trackerConfig), Generator: nativeGenerator, InputLevelDB: config.InputLevelDB,
+					PreserveInputLevel: config.PreserveInputLevel, SkipCalibration: config.SkipCalibration,
+				})
+			} else {
+				trace, err = livemode.EvaluatePCM(ctx, audioPath, pcm.Samples, pcm.SampleRate, config)
+			}
 			if err != nil {
 				return err
 			}
 			livemode.AddOfflineComparison(trace, offline, livemode.DefaultEvaluationBucket)
 			livemode.WriteEvaluationReport(os.Stdout, trace)
+			if comparison != nil {
+				trace.AnalyzerComparison = comparison
+				livemode.WriteAnalyzerComparison(os.Stdout, comparison)
+			}
 			if output := cmd.String("output"); output != "" {
 				if err := livemode.SaveEvaluationTrace(output, trace); err != nil {
 					return err
@@ -174,6 +205,7 @@ func liveCommand() *cli.Command {
 			&cli.StringFlag{Name: "sensitivity", Value: string(livemode.SensitivityLow), Usage: "microphone sensitivity (low, normal, or high)"},
 			&cli.BoolFlag{Name: "dry-run", Usage: "use mock device controller"},
 			&cli.BoolFlag{Name: "verbose", Usage: "print periodically refreshed analysis diagnostics"},
+			&cli.StringFlag{Name: "analyzer", Value: "python", Usage: "Live analyzer backend (python or experimental native)"},
 			&cli.StringFlag{Name: "python", Usage: "python executable (overrides the bundled analyzer)"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -209,11 +241,7 @@ func liveCommand() *cli.Command {
 			if len(selected) == 0 {
 				return fmt.Errorf("target %q contains no controllable lights", cmd.String("target"))
 			}
-			analyzerConfig, err := newAnalyzer(cmd)
-			if err != nil {
-				return err
-			}
-			analyzer, err := livemode.NewPythonAnalyzer(ctx, analyzerConfig)
+			analyzer, err := newLiveAnalyzer(ctx, cmd)
 			if err != nil {
 				return err
 			}
@@ -243,6 +271,79 @@ func liveCommand() *cli.Command {
 			fmt.Fprintf(os.Stdout, "listening on %s for target %s; press Ctrl-C to stop\n", source.Name(), cmd.String("target"))
 			return session.Run(ctx)
 		},
+	}
+}
+
+func recordInputCommand() *cli.Command {
+	return &cli.Command{
+		Name: "record-input", Usage: "record a bounded microphone sample as WAV for Live evaluation", ArgsUsage: "<file.wav>",
+		Flags: []cli.Flag{
+			&cli.DurationFlag{Name: "duration", Value: 30 * time.Second, Usage: "recording length (up to 10m)"},
+			&cli.StringFlag{Name: "input", Usage: "microphone name or ID (default system input when omitted)"},
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			path, err := singleArg(cmd, "maestro record-input [--duration 30s] [--input name] <file.wav>")
+			if err != nil {
+				return err
+			}
+			if !strings.EqualFold(filepath.Ext(path), ".wav") {
+				return fmt.Errorf("recording output must be a .wav file")
+			}
+			duration := cmd.Duration("duration")
+			if duration <= 0 || duration > recording.MaxDuration {
+				return fmt.Errorf("duration must be positive and at most %s", recording.MaxDuration)
+			}
+			file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+			if err != nil {
+				return fmt.Errorf("create recording (existing files are not overwritten): %w", err)
+			}
+			defer file.Close()
+			keep := false
+			defer func() {
+				if !keep {
+					_ = os.Remove(path)
+				}
+			}()
+			ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
+			defer stop()
+			source := microphone.NewMicrophoneSource(microphone.MicrophoneConfig{Device: cmd.String("input")})
+			fmt.Fprintf(os.Stdout, "Recording up to %s from %s; Ctrl-C saves a shorter clip.\n", duration, source.Name())
+			fmt.Fprintln(os.Stdout, "Keep a few seconds of room sound at the beginning to test startup calibration.")
+			pcm, captureErr := recording.Capture(ctx, source, microphone.DefaultCaptureSampleRate, duration)
+			if pcm == nil || len(pcm.Samples) == 0 {
+				if captureErr != nil {
+					return captureErr
+				}
+				return fmt.Errorf("microphone returned no samples")
+			}
+			if err := audio.WritePCM(file, pcm); err != nil {
+				return err
+			}
+			if err := file.Close(); err != nil {
+				return err
+			}
+			keep = true
+			fmt.Fprintf(os.Stdout, "Saved %.2fs from %s to %s (mono 24-bit WAV, original level).\n", float64(len(pcm.Samples))/float64(pcm.SampleRate), source.Name(), path)
+			if errors.Is(captureErr, context.Canceled) {
+				return nil
+			}
+			return captureErr
+		},
+	}
+}
+
+func newLiveAnalyzer(ctx context.Context, cmd *cli.Command) (livemode.Analyzer, error) {
+	switch cmd.String("analyzer") {
+	case "native":
+		return native.New(), nil
+	case "python":
+		config, err := newAnalyzer(cmd)
+		if err != nil {
+			return nil, err
+		}
+		return livemode.NewPythonAnalyzer(ctx, config)
+	default:
+		return nil, fmt.Errorf("unsupported Live analyzer %q (use python or native)", cmd.String("analyzer"))
 	}
 }
 

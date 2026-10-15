@@ -24,6 +24,7 @@ import (
 	"github.com/alessio-palumbo/lifx-maestro/internal/playback"
 	"github.com/alessio-palumbo/lifx-maestro/internal/timeline"
 	"github.com/alessio-palumbo/lifx-maestro/live/microphone"
+	"github.com/alessio-palumbo/lifx-maestro/live/native"
 )
 
 type App struct {
@@ -160,6 +161,7 @@ type EditorDeviceCapabilities struct {
 }
 
 type LiveRequest struct {
+	Analyzer    string `json:"analyzer"`
 	Input       string `json:"input"`
 	Target      string `json:"target"`
 	Style       string `json:"style"`
@@ -247,6 +249,9 @@ func (a *App) LiveInputs() ([]LiveInput, error) {
 }
 
 func (a *App) StartLive(request LiveRequest) error {
+	if request.Analyzer != "" && request.Analyzer != "python" && request.Analyzer != "native" {
+		return fmt.Errorf("unknown Live analyzer %q", request.Analyzer)
+	}
 	if request.Target == "" {
 		request.Target = "all"
 	}
@@ -266,14 +271,6 @@ func (a *App) StartLive(request LiveRequest) error {
 
 	a.StopPreview()
 	a.StopLive()
-	a.waitForAnalyzerWarmup()
-	if _, err := a.ensureAnalyzerInstalled(); err != nil && !errors.Is(err, analyzerbin.ErrNotBundled) {
-		return fmt.Errorf("prepare analyzer: %w", err)
-	}
-	analyzerConfig, err := analyzerbin.NewAnalyzer()
-	if err != nil {
-		return fmt.Errorf("prepare analyzer: %w", err)
-	}
 
 	controller, err := a.lifxController()
 	if err != nil {
@@ -297,7 +294,7 @@ func (a *App) StartLive(request LiveRequest) error {
 		parent = context.Background()
 	}
 	ctx, cancel := context.WithCancel(parent)
-	analyzer, err := livemode.NewPythonAnalyzer(ctx, analyzerConfig)
+	analyzer, err := a.newLiveAnalyzer(ctx, request.Analyzer)
 	if err != nil {
 		cancel()
 		return err
@@ -349,6 +346,21 @@ func (a *App) StartLive(request LiveRequest) error {
 		a.liveMu.Unlock()
 	}()
 	return nil
+}
+
+func (a *App) newLiveAnalyzer(ctx context.Context, kind string) (livemode.Analyzer, error) {
+	if kind == "native" {
+		return native.New(), nil
+	}
+	a.waitForAnalyzerWarmup()
+	if _, err := a.ensureAnalyzerInstalled(); err != nil && !errors.Is(err, analyzerbin.ErrNotBundled) {
+		return nil, fmt.Errorf("prepare analyzer: %w", err)
+	}
+	config, err := analyzerbin.NewAnalyzer()
+	if err != nil {
+		return nil, fmt.Errorf("prepare analyzer: %w", err)
+	}
+	return livemode.NewPythonAnalyzer(ctx, config)
 }
 
 func (a *App) StopLive() {
