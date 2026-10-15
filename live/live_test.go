@@ -3,6 +3,7 @@ package live_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -55,6 +56,40 @@ func await(t *testing.T, ch <-chan struct{}) {
 	case <-ch:
 	case <-time.After(3 * time.Second):
 		t.Fatal("timed out waiting for component")
+	}
+}
+
+func TestConfiguredMasterBrightness(t *testing.T) {
+	run := func(scale *float64) live.FrameBatch {
+		t.Helper()
+		var result live.FrameBatch
+		cfg := config(&analyzer{}, finite(nil), live.SinkFunc(func(_ context.Context, batch live.FrameBatch) error {
+			result = batch
+			return nil
+		}))
+		cfg.MasterBrightness = scale
+		engine, err := live.New(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := engine.Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if len(result) == 0 {
+			t.Fatal("no output")
+		}
+		return result
+	}
+	full, zero := 1.0, 0.0
+	if !reflect.DeepEqual(run(nil), run(&full)) {
+		t.Fatal("default is not full brightness")
+	}
+	for _, output := range run(&zero) {
+		for _, color := range output.Frame.Colors {
+			if color.Brightness != 1 {
+				t.Fatalf("explicit zero brightness = %v", color.Brightness)
+			}
+		}
 	}
 }
 

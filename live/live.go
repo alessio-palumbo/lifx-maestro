@@ -5,6 +5,7 @@ package live
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync/atomic"
 	"time"
 
@@ -78,6 +79,9 @@ type Config struct {
 	Sink     Sink
 	Observer Observer
 	Style    string
+	// MasterBrightness is a 0-1 output factor. Nil defaults to 1; explicit
+	// zero retains Maestro's 1% visible floor and does not change power.
+	MasterBrightness *float64
 	// Dynamics is auto (the default), calm, balanced, or energetic.
 	Dynamics       string
 	Tracker        TrackerConfig
@@ -97,6 +101,7 @@ type Engine struct {
 	engine    *core.Engine
 	generator *core.Generator
 	started   atomic.Bool
+	master    *atomic.Uint64
 }
 
 func New(config Config) (*Engine, error) {
@@ -156,15 +161,21 @@ func New(config Config) (*Engine, error) {
 	if tracker == (TrackerConfig{}) {
 		tracker = DefaultTrackerConfig()
 	}
+	master := &atomic.Uint64{}
+	scale := 1.0
+	if config.MasterBrightness != nil {
+		scale = *config.MasterBrightness
+	}
+	storeMasterBrightness(master, scale)
 	engine, err := core.NewEngine(core.EngineConfig{
 		Source: config.Source, Analyzer: config.Analyzer, Tracker: core.NewStateTracker(tracker),
-		Generator: generator, FrameSink: sinkAdapter{config.Sink}, Observer: config.Observer,
+		Generator: generator, FrameSink: sinkAdapter{sink: config.Sink, master: master}, Observer: config.Observer,
 		WindowDuration: config.WindowDuration, HopDuration: config.HopDuration, BorrowAnalyzer: true,
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &Engine{engine: engine, generator: generator}, nil
+	return &Engine{engine: engine, generator: generator, master: master}, nil
 }
 
 func (e *Engine) Run(ctx context.Context) error {
@@ -179,7 +190,25 @@ func (e *Engine) SetDynamics(value string) error {
 	return e.generator.SetIntensity(generation.DynamicsOverride(value))
 }
 
-type sinkAdapter struct{ sink Sink }
+// SetMasterBrightness changes the factor for the next outgoing batch, including
+// queued frames, without regenerating the show. It is safe during Run. Values
+// clamp to [0,1]; NaN resets to 1. An in-progress Write is not modified.
+// Nonpositive scaled brightness becomes 1%, matching standalone playback.
+func (e *Engine) SetMasterBrightness(scale float64) {
+	storeMasterBrightness(e.master, scale)
+}
+
+func storeMasterBrightness(master *atomic.Uint64, scale float64) {
+	if math.IsNaN(scale) {
+		scale = 1
+	}
+	master.Store(math.Float64bits(math.Max(0, math.Min(1, scale))))
+}
+
+type sinkAdapter struct {
+	sink   Sink
+	master *atomic.Uint64
+}
 
 func (s sinkAdapter) Run(ctx context.Context, input <-chan []TargetFrame) error {
 	for {
@@ -192,6 +221,23 @@ func (s sinkAdapter) Run(ctx context.Context, input <-chan []TargetFrame) error 
 			}
 			if err := ctx.Err(); err != nil {
 				return err
+			}
+			scale := math.Float64frombits(s.master.Load())
+			if scale != 1 {
+				// Copy before scaling: never mutate generator-owned originals or
+				// slices already transferred to a host sink.
+				batch = append([]TargetFrame(nil), batch...)
+				for i := range batch {
+					frame := &batch[i].Frame
+					frame.Colors = append(frame.Colors[:0:0], frame.Colors...)
+					for j := range frame.Colors {
+						brightness := frame.Colors[j].Brightness * scale
+						if brightness <= 0 {
+							brightness = 1
+						}
+						frame.Colors[j].Brightness = brightness
+					}
+				}
 			}
 			if err := s.sink.Write(ctx, batch); err != nil {
 				return err
